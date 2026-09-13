@@ -8,6 +8,22 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: raise
+          POSTGRES_PASSWORD: raise
+          POSTGRES_DB: raise
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U raise -d raise"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://raise:raise@localhost:5432/raise
     steps:
       - uses: actions/checkout@v4
 
@@ -24,6 +40,9 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Apply database migrations
+        run: npm run db:migrate:deploy --workspace apps/api
 
       - name: Test
         run: npm run test
