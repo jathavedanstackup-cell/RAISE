@@ -1,0 +1,213 @@
+// RAISE — core data model (CP1).
+// See docs/production-plan.md Part 3 for the source schema sketch and
+// docs/decisions.md for the modelling decisions that go beyond it.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum VisitStatus {
+  draft
+  confirmed
+  kitchen_started
+  table_set
+  guest_arrived
+  food_out
+  completed
+  cancelled
+  no_show
+}
+
+enum TableStatus {
+  free
+  held
+  seated
+}
+
+enum ConversationRole {
+  customer
+  system
+}
+
+model Restaurant {
+  id        String   @id @default(uuid(7))
+  name      String
+  timezone  String
+  address   String
+  phone     String
+  /// { avgPrepBufferMinutes: number, tableHoldWindowMinutes: number }
+  settings  Json
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  menuItems MenuItem[]
+  tables    Table[]
+  visits    Visit[]
+
+  @@map("restaurants")
+}
+
+model MenuItem {
+  id                String   @id @default(uuid(7))
+  restaurantId      String   @map("restaurant_id")
+  name              String
+  description       String?
+  /// Currency amount, 2 decimal places.
+  price             Decimal  @db.Decimal(10, 2)
+  prepTimeMinutes   Int      @map("prep_time_minutes")
+  allergens         String[]
+  modifiableOptions String[] @map("modifiable_options")
+  available         Boolean  @default(true)
+  category          String
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  restaurant Restaurant  @relation(fields: [restaurantId], references: [id])
+  visitItems VisitItem[]
+
+  @@index([restaurantId])
+  @@map("menu_items")
+}
+
+model Table {
+  id           String      @id @default(uuid(7))
+  restaurantId String      @map("restaurant_id")
+  label        String
+  seatsMin     Int         @map("seats_min")
+  seatsMax     Int         @map("seats_max")
+  status       TableStatus @default(free)
+  features     String[]
+  createdAt    DateTime    @default(now()) @map("created_at")
+  updatedAt    DateTime    @updatedAt @map("updated_at")
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
+  visits     Visit[]
+
+  @@index([restaurantId])
+  @@map("tables")
+}
+
+model Visit {
+  id           String @id @default(uuid(7))
+  restaurantId String @map("restaurant_id")
+
+  /// No Customer model exists yet — customer auth lands in CP2. Kept as a
+  /// bare, unvalidated identifier for now rather than inventing a premature
+  /// FK relation CP2 would just have to rework.
+  customerId String? @map("customer_id")
+
+  partySize    Int      @map("party_size")
+  hasChild     Boolean  @default(false) @map("has_child")
+  specialNeeds String[] @map("special_needs")
+
+  arrivalEta         DateTime  @map("arrival_eta")
+  arrivalConfirmedAt DateTime? @map("arrival_confirmed_at")
+
+  tableId         String?   @map("table_id")
+  tableAssignedAt DateTime? @map("table_assigned_at")
+
+  status VisitStatus @default(draft)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  restaurant        Restaurant         @relation(fields: [restaurantId], references: [id])
+  table             Table?             @relation(fields: [tableId], references: [id], onDelete: SetNull)
+  visitItems        VisitItem[]
+  conversationTurns ConversationTurn[]
+  notificationLogs  NotificationLog[]
+  statusEvents      VisitStatusEvent[]
+
+  @@index([restaurantId])
+  @@index([restaurantId, status])
+  @@index([tableId])
+  @@map("visits")
+}
+
+/// Append-only audit trail of Visit.status transitions — the timeline shown
+/// in deck slides 6/8, and what CP6 (timing engine) and CP8 (kitchen
+/// display) are built against. A dedicated table rather than more flat
+/// timestamp columns on Visit: it's genuinely append-only (a status can be
+/// revisited or corrected without a schema change), and CP6's "recompute on
+/// ETA drift" flow is naturally "insert another event", not "overwrite a
+/// column". See docs/decisions.md.
+model VisitStatusEvent {
+  id           String      @id @default(uuid(7))
+  restaurantId String      @map("restaurant_id")
+  visitId      String      @map("visit_id")
+  status       VisitStatus
+  occurredAt   DateTime    @default(now()) @map("occurred_at")
+
+  visit Visit @relation(fields: [visitId], references: [id], onDelete: Cascade)
+
+  @@index([restaurantId])
+  @@index([visitId])
+  @@map("visit_status_events")
+}
+
+model VisitItem {
+  id            String   @id @default(uuid(7))
+  restaurantId  String   @map("restaurant_id")
+  visitId       String   @map("visit_id")
+  menuItemId    String   @map("menu_item_id")
+  quantity      Int      @default(1)
+  /// Structured tags, not free text — e.g. ["spice_level:mild", "no_onion"].
+  modifications String[]
+  /// Structured tags, not free text — e.g. ["no_peanuts", "no_dairy"]. The
+  /// kitchen display renders these as flagged lines (CP8), never buried in
+  /// prose.
+  allergyFlags  String[] @map("allergy_flags")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  visit    Visit    @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  menuItem MenuItem @relation(fields: [menuItemId], references: [id])
+
+  @@index([restaurantId])
+  @@index([visitId])
+  @@index([menuItemId])
+  @@map("visit_items")
+}
+
+model ConversationTurn {
+  id              String           @id @default(uuid(7))
+  restaurantId    String           @map("restaurant_id")
+  visitId         String           @map("visit_id")
+  role            ConversationRole
+  transcript      String           @db.Text
+  /// JSON patch applied to the Visit draft as a result of this turn.
+  structuredDelta Json?            @map("structured_delta")
+  createdAt       DateTime         @default(now()) @map("created_at")
+
+  visit Visit @relation(fields: [visitId], references: [id], onDelete: Cascade)
+
+  @@index([restaurantId])
+  @@index([visitId])
+  @@map("conversation_turns")
+}
+
+model NotificationLog {
+  id           String    @id @default(uuid(7))
+  restaurantId String    @map("restaurant_id")
+  visitId      String    @map("visit_id")
+  /// e.g. "sms" | "push" | "email" — kept as a plain string; CP9 owns the
+  /// concrete channel set and provider wiring (Twilio SMS + web push per
+  /// Part 2.2), not CP1.
+  channel      String
+  payload      Json
+  sentAt       DateTime? @map("sent_at")
+  /// e.g. "pending" | "sent" | "failed" — same reasoning as `channel`.
+  status       String    @default("pending")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  visit Visit @relation(fields: [visitId], references: [id], onDelete: Cascade)
+
+  @@index([restaurantId])
+  @@index([visitId])
+  @@map("notification_logs")
+}

@@ -6,6 +6,8 @@ dist/
 build/
 .next/
 .turbo/
+*.tsbuildinfo
+apps/api/src/generated/
 
 # test/coverage
 coverage/
@@ -20,5 +22,6 @@ coverage/
 npm-debug.log*
 
 # editor/OS
+.vscode/
 .DS_Store
 Thumbs.db
