@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -53,16 +54,33 @@ export class MenuItemsController {
   @Post()
   @Roles('owner')
   create(@Req() request: StaffRequest, @Body() body: Record<string, unknown>) {
+    const { name, price, prepTimeMinutes, category } = body;
+    if (
+      typeof name !== 'string' ||
+      name.length === 0 ||
+      (typeof price !== 'string' && typeof price !== 'number') ||
+      typeof prepTimeMinutes !== 'number' ||
+      typeof category !== 'string' ||
+      category.length === 0
+    ) {
+      // Reject malformed input rather than silently defaulting it (e.g. a
+      // missing name becoming ""): CP3 owns full validation for this
+      // resource, but this demo surface shouldn't create nonsense rows.
+      throw new BadRequestException('name, price, prepTimeMinutes, and category are required');
+    }
+    const allergens = Array.isArray(body.allergens) ? (body.allergens as string[]) : [];
+    const modifiableOptions = Array.isArray(body.modifiableOptions) ? (body.modifiableOptions as string[]) : [];
+
     return this.tenantPrisma.forRestaurant(request.restaurantId, (tx) =>
       tx.menuItem.create({
         data: {
           restaurantId: request.restaurantId,
-          name: String(body.name ?? ''),
-          price: String(body.price ?? '0'),
-          prepTimeMinutes: Number(body.prepTimeMinutes ?? 0),
-          allergens: Array.isArray(body.allergens) ? (body.allergens as string[]) : [],
-          modifiableOptions: Array.isArray(body.modifiableOptions) ? (body.modifiableOptions as string[]) : [],
-          category: String(body.category ?? ''),
+          name,
+          price: String(price),
+          prepTimeMinutes,
+          allergens,
+          modifiableOptions,
+          category,
         },
       }),
     );

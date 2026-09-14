@@ -1,14 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { requireEnv } from '../env.util.js';
 import type { AuthTokenPayload } from './token.types.js';
 
 const AUDIENCE = 'customer';
 const EXPIRES_IN = '30d'; // guest-first: long-lived so a customer isn't re-OTP'd every visit
 
 function secret(): string {
-  const value = process.env.JWT_CUSTOMER_SECRET;
-  if (!value) throw new Error('JWT_CUSTOMER_SECRET is required');
-  return value;
+  return requireEnv('JWT_CUSTOMER_SECRET');
 }
 
 @Injectable()

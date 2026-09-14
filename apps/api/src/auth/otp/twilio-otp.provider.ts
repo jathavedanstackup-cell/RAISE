@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import twilio from 'twilio';
+import { requireEnv } from '../env.util.js';
 import type { OtpProvider } from './otp-provider.interface.js';
 
 /**
@@ -34,12 +35,4 @@ export class TwilioOtpProvider implements OtpProvider {
     });
     return result.status === 'approved';
   }
-}
-
-function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`${name} is required when OTP_PROVIDER=twilio`);
-  }
-  return value;
 }

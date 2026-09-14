@@ -1,7 +1,7 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import type { Request } from 'express';
 import { CustomerTokenService } from '../tokens/customer-token.service.js';
-import { extractBearerToken } from './staff-jwt.guard.js';
+import { extractBearerToken } from './bearer-token.util.js';
 import type { CustomerRequest } from './request.types.js';
 
 @Injectable()

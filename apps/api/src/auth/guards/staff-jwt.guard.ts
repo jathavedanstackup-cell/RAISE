@@ -1,6 +1,7 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import type { Request } from 'express';
 import { StaffTokenService } from '../tokens/staff-token.service.js';
+import { extractBearerToken } from './bearer-token.util.js';
 import type { StaffRequest } from './request.types.js';
 
 /**
@@ -27,10 +28,4 @@ export class StaffJwtGuard implements CanActivate {
       throw new UnauthorizedException('Invalid or expired staff token');
     }
   }
-}
-
-export function extractBearerToken(request: Request): string | undefined {
-  const header = request.headers.authorization;
-  if (!header?.startsWith('Bearer ')) return undefined;
-  return header.slice('Bearer '.length);
 }

@@ -1,14 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { requireEnv } from '../env.util.js';
 import type { AuthTokenPayload } from './token.types.js';
 
 const AUDIENCE = 'staff';
 const EXPIRES_IN = '12h';
 
 function secret(): string {
-  const value = process.env.JWT_STAFF_SECRET;
-  if (!value) throw new Error('JWT_STAFF_SECRET is required');
-  return value;
+  return requireEnv('JWT_STAFF_SECRET');
 }
 
 /**
