@@ -108,22 +108,25 @@ ALTER DEFAULT PRIVILEGES FOR ROLE raise IN SCHEMA public
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO raise_app;
 
 -- Tenant-scoped tables: RLS + FORCE (so even the owning "raise" role would
--- be subject to it, were it ever used for app traffic) + two permissive
--- policies per table. Postgres OR's permissive policies together, so a row
--- is visible/writable if EITHER matches:
---   1. tenant_isolation — restaurant_id equals the session's scoped tenant.
---   2. tenant_bypass    — an explicit, narrow escape hatch for operations
---      that are legitimately cross-tenant by nature (seeding, a future
---      platform-admin path). Never set by normal request handling.
+-- be subject to it, were it ever used for app traffic) + one permissive
+-- policy per table: restaurant_id must equal the session's scoped tenant.
 -- current_setting(..., true) returns NULL when unset, and
--- "restaurant_id = NULL" is never TRUE — so the default with neither
--- session var set is zero rows. Fails closed, not open.
+-- "restaurant_id = NULL" is never TRUE — so the default with the session
+-- var unset is zero rows. Fails closed, not open.
+--
+-- There is deliberately no bypass/escape-hatch policy. Postgres ORs
+-- permissive policies together, so a second "or this other condition"
+-- policy on every table would mean any code path that could set that
+-- condition disables tenant isolation everywhere, for reads AND writes, in
+-- one flag. Seeding already runs as the superuser role (DATABASE_URL),
+-- which bypasses RLS structurally — it never needed a policy-level bypass.
+-- If a genuinely cross-tenant platform-admin path is needed later (CP11+),
+-- it gets its own narrowly-scoped mechanism then, with a test pinning its
+-- blast radius — not a standing, uncalled "disable isolation" switch kept
+-- around in case something someday wants it.
 CREATE POLICY tenant_isolation ON "restaurants"
   USING (id = current_setting('app.current_restaurant_id', true))
   WITH CHECK (id = current_setting('app.current_restaurant_id', true));
-CREATE POLICY tenant_bypass ON "restaurants"
-  USING (current_setting('app.bypass_rls', true) = 'on')
-  WITH CHECK (current_setting('app.bypass_rls', true) = 'on');
 ALTER TABLE "restaurants" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "restaurants" FORCE ROW LEVEL SECURITY;
 
@@ -138,10 +141,6 @@ BEGIN
   LOOP
     EXECUTE format(
       'CREATE POLICY tenant_isolation ON %I USING (restaurant_id = current_setting(''app.current_restaurant_id'', true)) WITH CHECK (restaurant_id = current_setting(''app.current_restaurant_id'', true))',
-      t
-    );
-    EXECUTE format(
-      'CREATE POLICY tenant_bypass ON %I USING (current_setting(''app.bypass_rls'', true) = ''on'') WITH CHECK (current_setting(''app.bypass_rls'', true) = ''on'')',
       t
     );
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);

@@ -202,10 +202,10 @@ describe('CP2 tenant isolation', () => {
 
   it('RLS itself fails closed at the database level, independent of any app guard', async () => {
     // The app's own runtime PrismaService, connected as the restricted
-    // raise_app role, queried directly with no tenant scope set at all
-    // (no forRestaurant, no bypassScope). If RLS were misconfigured or a
-    // future query forgot to go through TenantPrismaService, this is what
-    // would either save or fail to save it.
+    // raise_app role, queried directly with no tenant scope set at all (no
+    // forRestaurant). If RLS were misconfigured or a future query forgot to
+    // go through TenantPrismaService, this is what would either save or
+    // fail to save it.
     const prismaService = app.get(PrismaService);
     const unscopedResult = await prismaService.menuItem.findMany({
       where: { id: { in: [menuItemAId, menuItemBId] } },
