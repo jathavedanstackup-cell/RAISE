@@ -24,6 +24,14 @@ jobs:
           --health-retries 5
     env:
       DATABASE_URL: postgresql://raise:raise@localhost:5432/raise
+      # CP2 — restricted runtime role the CP2 migration creates; the app
+      # (and the e2e isolation tests, which boot the real app) must never
+      # connect as the superuser role above. See docs/decisions.md.
+      APP_DATABASE_URL: postgresql://raise_app:raise_app@localhost:5432/raise
+      JWT_STAFF_SECRET: ci-staff-secret-not-for-real-use
+      JWT_CUSTOMER_SECRET: ci-customer-secret-not-for-real-use
+      OTP_PROVIDER: dev
+      OTP_DEV_FIXED_CODE: '424242'
     steps:
       - uses: actions/checkout@v4
 
@@ -46,3 +54,6 @@ jobs:
 
       - name: Test
         run: npm run test
+
+      - name: Test (e2e)
+        run: npm run test:e2e

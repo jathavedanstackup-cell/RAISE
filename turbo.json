@@ -1,6 +1,16 @@
 {
   "ui": "stream",
-  "globalEnv": ["DATABASE_URL"],
+  "globalEnv": [
+    "DATABASE_URL",
+    "APP_DATABASE_URL",
+    "JWT_STAFF_SECRET",
+    "JWT_CUSTOMER_SECRET",
+    "OTP_PROVIDER",
+    "OTP_DEV_FIXED_CODE",
+    "TWILIO_ACCOUNT_SID",
+    "TWILIO_AUTH_TOKEN",
+    "TWILIO_VERIFY_SERVICE_SID"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
@@ -19,6 +29,10 @@
       "outputs": []
     },
     "test": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "test:e2e": {
       "dependsOn": ["^build"],
       "outputs": []
     }

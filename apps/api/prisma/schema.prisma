@@ -34,6 +34,15 @@ enum ConversationRole {
   system
 }
 
+/// Staff role within a single restaurant membership. Deliberately NOT a
+/// column on User itself — see StaffMembership and docs/decisions.md
+/// ("Staff <-> Restaurant shape").
+enum StaffRole {
+  owner
+  foh
+  kitchen
+}
+
 model Restaurant {
   id        String   @id @default(uuid(7))
   name      String
@@ -45,11 +54,65 @@ model Restaurant {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  menuItems MenuItem[]
-  tables    Table[]
-  visits    Visit[]
+  menuItems        MenuItem[]
+  tables           Table[]
+  visits           Visit[]
+  staffMemberships StaffMembership[]
 
   @@map("restaurants")
+}
+
+/// A staff account. Deliberately holds no restaurant_id or role itself —
+/// those live on StaffMembership so one person can belong to more than one
+/// restaurant with a distinct role at each, without a schema change when
+/// CP13 (Phase 2 chains) arrives. See docs/decisions.md.
+model User {
+  id           String   @id @default(uuid(7))
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  name         String
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  memberships StaffMembership[]
+
+  @@map("users")
+}
+
+/// The user x restaurant x role join CP2 is built around. Not RLS-scoped by
+/// a value derived from itself — every lookup is keyed by (userId,
+/// restaurantId) from the request's route, so app.current_restaurant_id is
+/// always known before this table is queried. See docs/decisions.md.
+model StaffMembership {
+  id           String    @id @default(uuid(7))
+  userId       String    @map("user_id")
+  restaurantId String    @map("restaurant_id")
+  role         StaffRole
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, restaurantId])
+  @@index([restaurantId])
+  @@map("staff_memberships")
+}
+
+/// Customer identity. Deliberately guest-first: phone + phoneVerifiedAt is
+/// enough to exist and start a Visit; name/email are optional and collected
+/// later. See docs/decisions.md (Part 8 Q4).
+model Customer {
+  id              String    @id @default(uuid(7))
+  phone           String    @unique
+  phoneVerifiedAt DateTime? @map("phone_verified_at")
+  name            String?
+  email           String?
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  visits Visit[]
+
+  @@map("customers")
 }
 
 model MenuItem {
@@ -96,9 +159,9 @@ model Visit {
   id           String @id @default(uuid(7))
   restaurantId String @map("restaurant_id")
 
-  /// No Customer model exists yet — customer auth lands in CP2. Kept as a
-  /// bare, unvalidated identifier for now rather than inventing a premature
-  /// FK relation CP2 would just have to rework.
+  /// CP1 left this as a bare unvalidated string pending CP2's Customer
+  /// model; now a real FK. Still nullable: nothing in CP2 requires a
+  /// customer to exist before a Visit draft starts (CP4/CP5 own that flow).
   customerId String? @map("customer_id")
 
   partySize    Int      @map("party_size")
@@ -118,6 +181,7 @@ model Visit {
 
   restaurant        Restaurant         @relation(fields: [restaurantId], references: [id])
   table             Table?             @relation(fields: [tableId], references: [id], onDelete: SetNull)
+  customer          Customer?          @relation(fields: [customerId], references: [id])
   visitItems        VisitItem[]
   conversationTurns ConversationTurn[]
   notificationLogs  NotificationLog[]
@@ -126,6 +190,7 @@ model Visit {
   @@index([restaurantId])
   @@index([restaurantId, status])
   @@index([tableId])
+  @@index([customerId])
   @@map("visits")
 }
 
