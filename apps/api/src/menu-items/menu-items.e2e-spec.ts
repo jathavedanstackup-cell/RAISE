@@ -153,18 +153,20 @@ describe('CP3 menu item CRUD', () => {
     expect(notCreated).toBeNull();
   });
 
-  it('FOH cannot update an existing dish', async () => {
+  it('FOH and kitchen cannot update an existing dish', async () => {
     const created = await request(app.getHttpServer())
       .post(`/restaurants/${restaurantId}/menu-items`)
       .set('Authorization', `Bearer ${ownerToken}`)
-      .send({ ...validDish, name: 'FOH Cannot Touch This' });
+      .send({ ...validDish, name: 'FOH And Kitchen Cannot Touch This' });
     const id = created.body.id as string;
 
-    const res = await request(app.getHttpServer())
-      .patch(`/restaurants/${restaurantId}/menu-items/${id}`)
-      .set('Authorization', `Bearer ${fohToken}`)
-      .send({ available: false });
-    expect(res.status).toBe(403);
+    for (const token of [fohToken, kitchenToken]) {
+      const res = await request(app.getHttpServer())
+        .patch(`/restaurants/${restaurantId}/menu-items/${id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ available: false });
+      expect(res.status).toBe(403);
+    }
 
     const unchanged = await rawPrisma.menuItem.findUniqueOrThrow({ where: { id } });
     expect(unchanged.available).toBe(true);
@@ -221,6 +223,30 @@ describe('CP3 menu item CRUD', () => {
       .set('Authorization', `Bearer ${ownerToken}`);
     expect(getRes.body.name).toBe('Edited Name');
     expect(getRes.body.prepTimeMinutes).toBe(25);
+  });
+
+  it('a partial update omitting modifiableOptions leaves it untouched, not wiped', async () => {
+    // Regression coverage for a real bug caught in code review: the admin
+    // app's edit form has no modifiableOptions control yet, and an earlier
+    // version of its Server Action sent `modifiableOptions: []` on every
+    // save regardless — silently wiping it on every single edit. The fix
+    // is that the field must be entirely absent from a partial update
+    // request, and Prisma's updateMany must leave the column alone when
+    // it's absent. This test pins that contract at the API level,
+    // independent of whether the frontend ever regresses again.
+    const created = await request(app.getHttpServer())
+      .post(`/restaurants/${restaurantId}/menu-items`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({ ...validDish, name: 'Has Modifiable Options', modifiableOptions: ['spice_level'] });
+    const id = created.body.id as string;
+    expect(created.body.modifiableOptions).toEqual(['spice_level']);
+
+    const patchRes = await request(app.getHttpServer())
+      .patch(`/restaurants/${restaurantId}/menu-items/${id}`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({ name: 'Renamed, Options Should Survive' }); // no modifiableOptions key at all
+    expect(patchRes.status).toBe(200);
+    expect(patchRes.body.modifiableOptions).toEqual(['spice_level']);
   });
 
   it('an update cannot slip prepTimeMinutes down to 0 either', async () => {

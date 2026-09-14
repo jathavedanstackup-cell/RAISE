@@ -16,6 +16,7 @@ export interface StaffSession {
    * or auth change.
    */
   restaurantId: string;
+  restaurantName: string;
   role: StaffMeDto["memberships"][number]["role"];
 }
 
@@ -43,5 +44,11 @@ export async function requireStaffSession(): Promise<StaffSession> {
     throw new Error("This staff account has no restaurant membership yet.");
   }
 
-  return { token, me, restaurantId: primary.restaurantId, role: primary.role };
+  return {
+    token,
+    me,
+    restaurantId: primary.restaurantId,
+    restaurantName: primary.restaurantName,
+    role: primary.role,
+  };
 }

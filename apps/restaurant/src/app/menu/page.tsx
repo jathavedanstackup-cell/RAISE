@@ -17,7 +17,7 @@ export default async function MenuPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold tracking-tight text-foreground">Menu</h1>
-          <p className="mt-1 text-sm text-text-muted">{session.me.memberships[0]?.restaurantName}</p>
+          <p className="mt-1 text-sm text-text-muted">{session.restaurantName}</p>
         </div>
         <div className="flex items-center gap-2">
           {canManage ? (

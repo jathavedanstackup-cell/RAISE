@@ -25,6 +25,14 @@ export interface MenuFormState {
  * rule, defined once, not two hand-written copies that could drift apart.
  * The API's own validation is still the actual enforcement boundary —
  * this parse is for UX, not the trust boundary.
+ *
+ * `modifiableOptions` is deliberately NOT read here — this form has no
+ * control for it yet (out of CP3's deliverable list). Omitting the key
+ * entirely (not sending `[]`) matters: on create, the schema's own
+ * `.default([])` fills it in; on update, its schema field is `.optional()`
+ * with no default, so an absent key means Prisma's `updateMany` leaves the
+ * column untouched. Sending `[]` unconditionally here would instead wipe
+ * an existing dish's modifiable options on every single edit.
  */
 function readMenuItemForm(formData: FormData) {
   return {
@@ -34,7 +42,6 @@ function readMenuItemForm(formData: FormData) {
     prepTimeMinutes: formData.get("prepTimeMinutes") ? Number(formData.get("prepTimeMinutes")) : undefined,
     category: formData.get("category"),
     allergens: formData.getAll("allergens"),
-    modifiableOptions: [],
     available: formData.get("available") === "on",
   };
 }
