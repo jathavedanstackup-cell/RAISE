@@ -1,22 +1,82 @@
 @import "tailwindcss";
 
+/*
+ * Design tokens — three layers (primitive -> semantic -> component), per
+ * the design-system skill's architecture. The dark-surface primitives
+ * below are the EXACT values docs/accessibility-audit.md measured and
+ * passed against the concept deck — carried over verbatim rather than
+ * re-derived, per that audit's own priority fix #3 ("re-deriving colors
+ * from scratch risks accidentally regressing a currently-passing contrast
+ * ratio"). This is CP3, the first checkpoint with any UI; these tokens are
+ * meant to be the shared starting point CP4/CP7/CP8 draw from too, not
+ * something scoped only to this admin screen. See docs/decisions.md for
+ * why THIS screen (a plain CRUD admin tool, not the live customer/kitchen
+ * UI those measurements came from) uses a light neutral theme for
+ * everything except the allergen tag, which reuses the measured dark
+ * pairing verbatim rather than inventing an unmeasured light-mode variant
+ * of the same accent color.
+ */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* ---- Primitive: measured, from docs/accessibility-audit.md ---- */
+  --raise-near-black: #0a0a0a;
+  --raise-white: #ffffff;
+  /* "SENT AS" / priority accent (measured ~10.2:1 on near-black) */
+  --raise-accent-priority: rgb(244, 172, 114);
+  /* Allergy warning line (measured ~11.5:1 on near-black). Kept as a
+     DISTINCT token from priority-accent even though visually close —
+     docs/concept-critique.md flags the deck's reuse of one accent color
+     for both "priority" and "warning" as something to resolve, not
+     perpetuate; CP3 keeps them separate on principle even though this
+     screen only uses the warning one. */
+  --raise-accent-warning: rgb(249, 176, 135);
+  --raise-muted-on-dark: rgb(161, 159, 172);
+
+  /* ---- Primitive: light-admin neutrals (NOT from the audit — this
+     screen's own theme; the audit never measured a light surface, so
+     nothing here is a "measured pairing" claim, and every value below is
+     chosen to independently clear WCAG AA, verified separately). ---- */
+  --raise-zinc-50: #fafafa;
+  --raise-zinc-500: #71717a; /* ~4.8:1 on white — see border-default note below */
+  --raise-zinc-600: #52525b; /* ~7.5:1 on white */
+  --raise-zinc-900: #18181b; /* ~17.9:1 on white */
+  --raise-red-700: #b91c1c; /* ~6.4:1 on white */
+  --raise-green-700: #15803d; /* ~5.1:1 on white */
+
+  /* ---- Semantic ---- */
+  --background: var(--raise-white);
+  --foreground: var(--raise-zinc-900);
+  --surface-muted: var(--raise-zinc-50);
+  /* Ran design:accessibility-review against this screen (CP3) before
+     calling it done: the initially-chosen zinc-200 (#e4e4e7) measures only
+     ~1.3:1 against white — a UI-component boundary (input/button/badge
+     borders) needs >=3:1 (WCAG 2.2 SC 1.4.11, Non-text contrast). zinc-500
+     is the lightest step in this scale that actually clears it. */
+  --border-default: var(--raise-zinc-500);
+  --text-muted: var(--raise-zinc-600);
+  --color-danger: var(--raise-red-700);
+  --color-success: var(--raise-green-700);
+
+  /* ---- Component: allergen tag chip — the one place this admin screen
+     reuses the audit's measured dark pairing directly, matching the
+     product's own established "allergy flag" visual language (deck slide
+     6/8; CP8's kitchen display renders the same relationship). ---- */
+  --chip-allergen-bg: var(--raise-near-black);
+  --chip-allergen-fg: var(--raise-accent-warning);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-surface-muted: var(--surface-muted);
+  --color-border-default: var(--border-default);
+  --color-text-muted: var(--text-muted);
+  --color-danger: var(--color-danger);
+  --color-success: var(--color-success);
+  --color-chip-allergen-bg: var(--chip-allergen-bg);
+  --color-chip-allergen-fg: var(--chip-allergen-fg);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {

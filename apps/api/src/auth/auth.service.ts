@@ -1,5 +1,7 @@
-import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import type { StaffMeDto } from '@raise/shared-types';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { TenantPrismaService } from '../prisma/tenant-prisma.service.js';
 import { PasswordService } from './password.service.js';
 import { StaffTokenService } from './tokens/staff-token.service.js';
 import { CustomerTokenService } from './tokens/customer-token.service.js';
@@ -9,6 +11,7 @@ import { OTP_PROVIDER, type OtpProvider } from './otp/otp-provider.interface.js'
 export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly tenantPrisma: TenantPrismaService,
     private readonly passwords: PasswordService,
     private readonly staffTokens: StaffTokenService,
     private readonly customerTokens: CustomerTokenService,
@@ -29,6 +32,42 @@ export class AuthService {
       throw new UnauthorizedException('Invalid email or password');
     }
     return { token: this.staffTokens.sign(user.id) };
+  }
+
+  /**
+   * A staff JWT carries no restaurant_id (see the class-level note on
+   * staffLogin), so the restaurant app calls this right after login to
+   * discover which restaurant(s) the signed-in user may act on.
+   *
+   * Two scoped lookups, not one join, on purpose: `staff_memberships` is
+   * read via forCurrentUser (CP3's self_membership_lookup RLS policy —
+   * "show me my own membership rows"), then each distinct restaurant's
+   * name is read via forRestaurant (CP2's existing tenant_isolation
+   * policy). A single query joining straight to `restaurants` would have
+   * to cross both policies in one transaction, effectively asking "and
+   * also let me read a restaurants row despite app.current_restaurant_id
+   * not being set" — exactly the kind of one-off carve-out CP2's pre-merge
+   * fix removed. Two scoped calls, each answering exactly the question its
+   * own policy already allows, is the smaller, easier-to-reason surface.
+   */
+  async staffMe(userId: string): Promise<StaffMeDto> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException();
+
+    const memberships = await this.tenantPrisma.forCurrentUser(userId, (tx) =>
+      tx.staffMembership.findMany({ where: { userId }, orderBy: { createdAt: 'asc' } }),
+    );
+
+    const withRestaurantNames = await Promise.all(
+      memberships.map(async (membership) => {
+        const restaurant = await this.tenantPrisma.forRestaurant(membership.restaurantId, (tx) =>
+          tx.restaurant.findUniqueOrThrow({ where: { id: membership.restaurantId } }),
+        );
+        return { restaurantId: membership.restaurantId, restaurantName: restaurant.name, role: membership.role };
+      }),
+    );
+
+    return { id: user.id, email: user.email, name: user.name, memberships: withRestaurantNames };
   }
 
   async customerRequestOtp(phone: string): Promise<void> {

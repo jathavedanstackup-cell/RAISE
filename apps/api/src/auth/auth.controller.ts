@@ -1,5 +1,7 @@
-import { BadRequestException, Body, Controller, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
 import { AuthService } from './auth.service.js';
+import { StaffJwtGuard } from './guards/staff-jwt.guard.js';
+import type { StaffJwtRequest } from './guards/request.types.js';
 
 @Controller('auth')
 export class AuthController {
@@ -9,6 +11,12 @@ export class AuthController {
   staffLogin(@Body() body: { email?: string; password?: string }) {
     const { email, password } = requireStrings(body, ['email', 'password']);
     return this.auth.staffLogin(email, password);
+  }
+
+  @Get('staff/me')
+  @UseGuards(StaffJwtGuard)
+  staffMe(@Req() request: StaffJwtRequest) {
+    return this.auth.staffMe(request.staffUserId);
   }
 
   @Post('customer/otp/request')

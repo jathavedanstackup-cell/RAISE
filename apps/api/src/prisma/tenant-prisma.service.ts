@@ -38,4 +38,19 @@ export class TenantPrismaService {
       return work(tx);
     });
   }
+
+  /**
+   * Scope every query in `work` to one staff user's own rows (CP3's
+   * `self_membership_lookup` RLS policy on `staff_memberships`). `userId`
+   * must come from a verified JWT `sub` claim, never from request input —
+   * this is what makes it a narrow "see your own rows" grant rather than a
+   * bypass: the session variable it sets can only ever equal the caller's
+   * own identity. See docs/decisions.md.
+   */
+  forCurrentUser<T>(userId: string, work: (tx: ScopedPrisma) => Promise<T>): Promise<T> {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.current_user_id', ${userId}, true)`;
+      return work(tx);
+    });
+  }
 }
