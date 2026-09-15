@@ -164,15 +164,29 @@ model Visit {
   /// customer to exist before a Visit draft starts (CP4/CP5 own that flow).
   customerId String? @map("customer_id")
 
-  partySize    Int      @map("party_size")
+  /// CP4: nullable, not required — a draft Visit and its ConversationTurns
+  /// must exist from the first greeting, before the customer has stated a
+  /// party size (Part 4.1: greet, THEN ask party size/ETA). Was
+  /// non-nullable through CP1-CP3, which never actually constructed a
+  /// Visit row before both fields were known. See docs/decisions.md.
+  partySize    Int?     @map("party_size")
   hasChild     Boolean  @default(false) @map("has_child")
   specialNeeds String[] @map("special_needs")
 
-  arrivalEta         DateTime  @map("arrival_eta")
+  /// CP4: nullable for the same reason as partySize above.
+  arrivalEta         DateTime? @map("arrival_eta")
   arrivalConfirmedAt DateTime? @map("arrival_confirmed_at")
 
   tableId         String?   @map("table_id")
   tableAssignedAt DateTime? @map("table_assigned_at")
+
+  /// CP4: refreshed to now()+15m on every processed intake turn while
+  /// status is still `draft`. A draft's own inactivity window — not the
+  /// real post-confirmation Table hold, which is CP5's job (see
+  /// docs/decisions.md, Part 8 Q3). Null once the draft is confirmed
+  /// (CP5) or otherwise leaves `draft`; a draft never auto-confirms on
+  /// expiry, it only triggers an honest recap-and-reconfirm turn.
+  draftExpiresAt DateTime? @map("draft_expires_at")
 
   status VisitStatus @default(draft)
 

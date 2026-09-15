@@ -32,6 +32,10 @@ jobs:
       JWT_CUSTOMER_SECRET: ci-customer-secret-not-for-real-use
       OTP_PROVIDER: dev
       OTP_DEV_FIXED_CODE: '424242'
+      # CP4 — dev stubs only; no DEEPGRAM_API_KEY/ANTHROPIC_API_KEY in CI.
+      # See docs/decisions.md Part 8 Q1/Q2.
+      ASR_PROVIDER: dev
+      LLM_PROVIDER: dev
     steps:
       - uses: actions/checkout@v4
 
