@@ -8,7 +8,7 @@ import { DIALOGUE_ENGINE, type DialogueEngine, type DialogueHistoryTurn } from '
 import { executeTool } from './tools/tool-definitions.js';
 import type { ToolExecutionContext } from './tools/tool-types.js';
 import { toVisitDraftDto, type VisitWithItemsAndTable } from './draft-mapper.js';
-import { DRAFT_INACTIVITY_WINDOW_MS } from './draft-policy.js';
+import { getDraftInactivityWindowMs } from './draft-policy.js';
 
 const VISIT_ITEMS_INCLUDE = { visitItems: { include: { menuItem: true } }, table: true } as const;
 
@@ -37,7 +37,7 @@ export class IntakeService {
           restaurantId,
           customerId,
           specialNeeds: [],
-          draftExpiresAt: new Date(Date.now() + DRAFT_INACTIVITY_WINDOW_MS),
+          draftExpiresAt: new Date(Date.now() + getDraftInactivityWindowMs()),
         },
         include: VISIT_ITEMS_INCLUDE,
       }),
@@ -153,7 +153,7 @@ export class IntakeService {
     await this.tenantPrisma.forRestaurant(restaurantId, (tx) =>
       tx.visit.updateMany({
         where: { id: visitId, restaurantId },
-        data: { draftExpiresAt: new Date(Date.now() + DRAFT_INACTIVITY_WINDOW_MS) },
+        data: { draftExpiresAt: new Date(Date.now() + getDraftInactivityWindowMs()) },
       }),
     );
 
@@ -188,7 +188,7 @@ export class IntakeService {
       await this.tenantPrisma.forRestaurant(restaurantId, (tx) =>
         tx.visit.updateMany({
           where: { id: visit.id, restaurantId },
-          data: { draftExpiresAt: new Date(Date.now() + DRAFT_INACTIVITY_WINDOW_MS) },
+          data: { draftExpiresAt: new Date(Date.now() + getDraftInactivityWindowMs()) },
         }),
       );
     }
