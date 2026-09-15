@@ -244,10 +244,12 @@ Each checkpoint below is scoped to be a self-contained PR: clear inputs, deliver
 ## Part 7 — Design Workflow for UI Checkpoints
 
 For any checkpoint that produces a new customer- or restaurant-facing screen (CP4's confirmation summary UI, CP7 dashboard, CP8 KDS), route the design step through the installed design skills rather than hand-rolling layout ad hoc:
-- `design` (Claude Design canvas) to draft the screen.
-- `design:accessibility-review` before calling a screen done — this system is used hands-free while driving (customer side) and under time pressure in a kitchen (KDS side); both are accessibility-critical contexts, not optional polish.
-- `design:ux-copy` for the confirmation read-back and error/empty states (e.g. "no table available for that time" must be honest, not evasive, per the deck's own "nothing is booked until you say yes" principle).
-- `design:design-handoff` once a screen is approved, to generate the spec Claude Code builds the checkpoint against.
+**Skill names are not portable between environments.** CP3 found that `design:ux-copy`, `design:accessibility-review` and `design:design-handoff` don't exist in every session, while a standalone `accessibility-audit` skill and a `design` skill with `design-system`/`ui-styling` sub-skills do. Treat the four items below as *capabilities to cover*, not slugs to invoke: enumerate what's actually installed, map each to its closest real match, and record in `docs/decisions.md` which ran and which had no equivalent. Never report a step as done because the plan names it.
+
+- a canvas/drafting skill to draft the screen.
+- an accessibility review before calling a screen done — this system is used hands-free while driving (customer side) and under time pressure in a kitchen (KDS side); both are accessibility-critical contexts, not optional polish.
+- a UX-copy pass for the confirmation read-back and error/empty states (e.g. "no table available for that time" must be honest, not evasive, per the deck's own "nothing is booked until you say yes" principle). If no skill covers this, write the copy deliberately against `docs/concept-critique.md` and say so.
+- a handoff spec once a screen is approved, for the checkpoint to build against.
 
 ---
 

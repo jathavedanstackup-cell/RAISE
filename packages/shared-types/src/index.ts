@@ -13,3 +13,6 @@ export interface ServiceHealth {
   service: ServiceName;
   status: "ok";
 }
+
+export * from "./menu-item.js";
+export * from "./staff-auth.js";
