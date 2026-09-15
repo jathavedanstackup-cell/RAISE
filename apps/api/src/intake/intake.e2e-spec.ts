@@ -356,8 +356,10 @@ describe('CP4 voice/chat intake pipeline', () => {
     // guest's held token is untouched — it was only just reissued and its
     // real cryptographic exp hasn't lapsed; only the DB column is faked
     // here, to isolate this test to the business-timeout behavior, not
-    // token expiry. See docs/decisions.md for the token-expiry-vs-business-
-    // timeout interaction this deliberately does not exercise.)
+    // token expiry. The next test below, "a business-stale draft is still
+    // reachable...", is the one that exercises the token's own expiry
+    // against real elapsed time — see docs/decisions.md's CP4 follow-up
+    // entry for why the two need to be separate tests.)
     await rawPrisma.visit.update({ where: { id: guest.visitId }, data: { draftExpiresAt: new Date(Date.now() - 1000) } });
 
     const res = await guest.sendText('sorry, still there');
@@ -369,6 +371,41 @@ describe('CP4 voice/chat intake pipeline', () => {
 
     const refreshed = await rawPrisma.visit.findUniqueOrThrow({ where: { id: guest.visitId } });
     expect(refreshed.draftExpiresAt!.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  /**
+   * CP4 follow-up (see docs/decisions.md): before this fix, the draft
+   * token's own `exp` was tied to the same window as
+   * `Visit.draftExpiresAt`, so IntakeDraftGuard rejected a returning
+   * guest's token with a 404 at the exact moment IntakeService's own
+   * recap-and-reconfirm logic was supposed to catch them — the Q3
+   * behavior above was unreachable in production. Uses real elapsed time
+   * against short, overridden windows (DRAFT_INACTIVITY_WINDOW_MS_OVERRIDE
+   * / DRAFT_TOKEN_TTL_MS_OVERRIDE — test-only env levers, see
+   * draft-policy.ts) rather than a faked DB column, so this genuinely
+   * exercises JWT expiry, not just the business-staleness check.
+   */
+  it('CP4 follow-up: a business-stale draft is still reachable within the token\'s (longer) grace period — reaches recap, not a 404', async () => {
+    process.env.DRAFT_INACTIVITY_WINDOW_MS_OVERRIDE = '50';
+    process.env.DRAFT_TOKEN_TTL_MS_OVERRIDE = '3000';
+    try {
+      const guest = createSession(restaurantId);
+      await guest.start();
+      await guest.sendText("I'll have the Garlic Naan");
+
+      // Let the (overridden, 50ms) business window genuinely lapse in
+      // real time. The (overridden, 3000ms) token is nowhere near expiry.
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      const res = await guest.sendText('sorry, still there');
+      expect(res.status).toBe(201);
+      expect(res.body.reengaged).toBe(true);
+      expect(res.body.assistantMessage).toMatch(/took a little while|still want to go ahead/i);
+      expect(res.body.assistantMessage).toMatch(/Garlic Naan/i);
+    } finally {
+      delete process.env.DRAFT_INACTIVITY_WINDOW_MS_OVERRIDE;
+      delete process.env.DRAFT_TOKEN_TTL_MS_OVERRIDE;
+    }
   });
 
   it('a visit from another restaurant 404s rather than leaking cross-tenant', async () => {
