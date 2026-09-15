@@ -3,7 +3,9 @@ import { JwtModule } from '@nestjs/jwt';
 import { IntakeController } from './intake.controller.js';
 import { IntakeService } from './intake.service.js';
 import { OptionalCustomerJwtGuard } from '../auth/guards/optional-customer-jwt.guard.js';
+import { IntakeDraftGuard } from '../auth/guards/intake-draft.guard.js';
 import { CustomerTokenService } from '../auth/tokens/customer-token.service.js';
+import { IntakeTokenService } from '../auth/tokens/intake-token.service.js';
 import { ASR_PROVIDER } from './asr/asr-provider.interface.js';
 import { DevAsrProvider } from './asr/dev-asr.provider.js';
 import { DeepgramAsrProvider } from './asr/deepgram-asr.provider.js';
@@ -17,7 +19,9 @@ import { ClaudeDialogueEngine } from './llm/claude-dialogue.engine.js';
   providers: [
     IntakeService,
     OptionalCustomerJwtGuard,
+    IntakeDraftGuard,
     CustomerTokenService,
+    IntakeTokenService,
     {
       provide: ASR_PROVIDER,
       // Defaults to the dev stub — ASR_PROVIDER=deepgram must be set

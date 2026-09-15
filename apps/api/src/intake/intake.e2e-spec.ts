@@ -23,6 +23,9 @@ import { DIALOGUE_ENGINE } from './llm/dialogue-engine.interface.js';
  *    outage) has a defined behavior and an assertion here.
  *  - Visit.status never leaves `draft` anywhere in this file — CP5 owns
  *    `confirmed`.
+ *  - CP4 pre-merge fix: draft access requires the draft-scoped
+ *    `draftToken`, not just `visitId` — see "IDOR" tests below, and
+ *    docs/decisions.md.
  */
 function encodeFixtureTranscript(text: string): string {
   return Buffer.from(text, 'utf8').toString('base64');
@@ -133,67 +136,101 @@ describe('CP4 voice/chat intake pipeline', () => {
     await app.close();
   });
 
-  async function startVisit(rid: string): Promise<string> {
-    const res = await request(app.getHttpServer()).post(`/restaurants/${rid}/intake/start`).send();
-    expect(res.status).toBe(201);
-    expect(res.body.visit.status).toBe('draft');
-    return res.body.visit.id as string;
-  }
-
-  async function sendText(rid: string, visitId: string, text: string) {
-    const res = await request(app.getHttpServer())
-      .post(`/restaurants/${rid}/intake/${visitId}/turn`)
-      .send({ mode: 'text', text });
-    return res;
+  /**
+   * A guest's session: tracks `visitId` and the current `draftToken`
+   * together, since the token is reissued on every response (see
+   * docs/decisions.md) and every subsequent call must send the latest
+   * one, not the one minted at `start`.
+   */
+  function createSession(rid: string) {
+    let visitId = '';
+    let token = '';
+    return {
+      async start() {
+        const res = await request(app.getHttpServer()).post(`/restaurants/${rid}/intake/start`).send();
+        expect(res.status).toBe(201);
+        expect(res.body.visit.status).toBe('draft');
+        visitId = res.body.visit.id;
+        token = res.body.draftToken;
+        return res;
+      },
+      async sendText(text: string) {
+        const res = await request(app.getHttpServer())
+          .post(`/restaurants/${rid}/intake/${visitId}/turn`)
+          .set('Authorization', `Bearer ${token}`)
+          .send({ mode: 'text', text });
+        if (res.status === 201 && res.body.draftToken) token = res.body.draftToken;
+        return res;
+      },
+      async sendVoice(audioBase64: string, mimeType: string) {
+        const res = await request(app.getHttpServer())
+          .post(`/restaurants/${rid}/intake/${visitId}/turn`)
+          .set('Authorization', `Bearer ${token}`)
+          .send({ mode: 'voice', audioBase64, mimeType });
+        if (res.status === 201 && res.body.draftToken) token = res.body.draftToken;
+        return res;
+      },
+      async getState() {
+        return request(app.getHttpServer()).get(`/restaurants/${rid}/intake/${visitId}`).set('Authorization', `Bearer ${token}`);
+      },
+      get visitId() {
+        return visitId;
+      },
+      get token() {
+        return token;
+      },
+    };
   }
 
   it('completes a full scripted conversation into a correct structured draft', async () => {
-    const visitId = await startVisit(restaurantId);
+    const guest = createSession(restaurantId);
+    await guest.start();
 
-    const partyRes = await sendText(restaurantId, visitId, 'party of 4, arriving at 8:00pm');
+    const partyRes = await guest.sendText('party of 4, arriving at 8:00pm');
     expect(partyRes.status).toBe(201);
     expect(partyRes.body.visit.partySize).toBe(4);
     expect(partyRes.body.visit.arrivalEta).not.toBeNull();
 
-    const menuRes = await sendText(restaurantId, visitId, "What's on the menu?");
+    const menuRes = await guest.sendText("What's on the menu?");
     expect(menuRes.status).toBe(201);
     expect(menuRes.body.assistantMessage).toMatch(/Butter Chicken/i);
 
-    const orderRes = await sendText(restaurantId, visitId, "I'll have the Butter Chicken and a Garlic Naan");
+    const orderRes = await guest.sendText("I'll have the Butter Chicken and a Garlic Naan");
     expect(orderRes.status).toBe(201);
     expect(orderRes.body.visit.items).toHaveLength(2);
     expect(orderRes.body.visit.items.map((i: { name: string }) => i.name).sort()).toEqual(['Butter Chicken', 'Garlic Naan']);
 
-    const allergyRes = await sendText(restaurantId, visitId, "I'm allergic to peanuts");
+    const allergyRes = await guest.sendText("I'm allergic to peanuts");
     expect(allergyRes.status).toBe(201);
     expect(allergyRes.body.visit.items.every((i: { allergyFlags: string[] }) => i.allergyFlags.includes('peanuts'))).toBe(true);
 
-    const tableRes = await sendText(restaurantId, visitId, 'Do you have a table for us?');
+    const tableRes = await guest.sendText('Do you have a table for us?');
     expect(tableRes.status).toBe(201);
     expect(tableRes.body.assistantMessage).toMatch(/T4/);
 
-    const proposeRes = await sendText(restaurantId, visitId, "We'll take T4");
+    const proposeRes = await guest.sendText("We'll take T4");
     expect(proposeRes.status).toBe(201);
     expect(proposeRes.body.visit.tableProposal).toMatchObject({ label: 'T4' });
 
-    const summaryRes = await sendText(restaurantId, visitId, 'Can you read that back to me?');
+    const summaryRes = await guest.sendText('Can you read that back to me?');
     expect(summaryRes.status).toBe(201);
     expect(summaryRes.body.assistantMessage).toMatch(/party of 4/i);
     expect(summaryRes.body.assistantMessage).toMatch(/T4/);
     expect(summaryRes.body.visit.status).toBe('draft');
 
     // Every turn was persisted under RLS via TenantPrismaService.
-    const stateRes = await request(app.getHttpServer()).get(`/restaurants/${restaurantId}/intake/${visitId}`);
+    const stateRes = await guest.getState();
     expect(stateRes.status).toBe(200);
     expect(stateRes.body.turns.length).toBeGreaterThanOrEqual(14); // greeting + 7 customer + 7 system turns
     expect(stateRes.body.turns.every((t: { role: string }) => t.role === 'customer' || t.role === 'system')).toBe(true);
   });
 
   it('GROUNDING: a dish disabled mid-conversation can no longer be accepted — the checkpoint-required test', async () => {
-    const visitId = await startVisit(restaurantId);
-    await sendText(restaurantId, visitId, 'party of 2, arriving at 7:00pm');
+    const guest = createSession(restaurantId);
+    await guest.start();
+    await guest.sendText('party of 2, arriving at 7:00pm');
 
-    const firstOrder = await sendText(restaurantId, visitId, "I'll have the Dal Makhani");
+    const firstOrder = await guest.sendText("I'll have the Dal Makhani");
     expect(firstOrder.status).toBe(201);
     expect(firstOrder.body.visit.items).toHaveLength(1);
     expect(firstOrder.body.visit.items[0].menuItemId).toBe(dalMakhaniId);
@@ -207,13 +244,13 @@ describe('CP4 voice/chat intake pipeline', () => {
     expect(disableRes.body.available).toBe(false);
 
     // Same phrase, same conversation — the pipeline must not accept it again.
-    const secondOrder = await sendText(restaurantId, visitId, "I'll have the Dal Makhani");
+    const secondOrder = await guest.sendText("I'll have the Dal Makhani");
     expect(secondOrder.status).toBe(201);
     expect(secondOrder.body.assistantMessage).toMatch(/couldn't find|no longer available/i);
     // Still exactly one VisitItem — no phantom second row referencing the disabled dish.
     expect(secondOrder.body.visit.items).toHaveLength(1);
 
-    const visitItemRows = await rawPrisma.visitItem.findMany({ where: { visitId } });
+    const visitItemRows = await rawPrisma.visitItem.findMany({ where: { visitId: guest.visitId } });
     expect(visitItemRows).toHaveLength(1);
     expect(visitItemRows.every((row) => row.menuItemId === dalMakhaniId)).toBe(true);
 
@@ -225,27 +262,29 @@ describe('CP4 voice/chat intake pipeline', () => {
   });
 
   it('UNHAPPY PATH: mid-flow change of mind — swap, remove, and quantity change all work', async () => {
-    const visitId = await startVisit(restaurantId);
-    await sendText(restaurantId, visitId, 'party of 2, arriving at 7:30pm');
-    await sendText(restaurantId, visitId, "I'll have the Butter Chicken and a Garlic Naan");
+    const guest = createSession(restaurantId);
+    await guest.start();
+    await guest.sendText('party of 2, arriving at 7:30pm');
+    await guest.sendText("I'll have the Butter Chicken and a Garlic Naan");
 
-    const removeRes = await sendText(restaurantId, visitId, 'actually, remove the garlic naan');
+    const removeRes = await guest.sendText('actually, remove the garlic naan');
     expect(removeRes.status).toBe(201);
     expect(removeRes.body.visit.items.map((i: { name: string }) => i.name)).toEqual(['Butter Chicken']);
 
-    const swapRes = await sendText(restaurantId, visitId, 'instead of the butter chicken, give me the dal makhani');
+    const swapRes = await guest.sendText('instead of the butter chicken, give me the dal makhani');
     expect(swapRes.status).toBe(201);
     expect(swapRes.body.visit.items.map((i: { name: string }) => i.name)).toEqual(['Dal Makhani']);
 
-    const qtyRes = await sendText(restaurantId, visitId, 'make that 2');
+    const qtyRes = await guest.sendText('make that 2');
     expect(qtyRes.status).toBe(201);
     expect(qtyRes.body.visit.items).toHaveLength(1);
     expect(qtyRes.body.visit.items[0].quantity).toBe(2);
   });
 
   it('UNHAPPY PATH: out-of-scope request gets an honest redirect, no tool call, no draft mutation', async () => {
-    const visitId = await startVisit(restaurantId);
-    const res = await sendText(restaurantId, visitId, "What's the weather like today?");
+    const guest = createSession(restaurantId);
+    await guest.start();
+    const res = await guest.sendText("What's the weather like today?");
     expect(res.status).toBe(201);
     expect(res.body.visit.items).toHaveLength(0);
     expect(res.body.visit.partySize).toBeNull();
@@ -253,29 +292,28 @@ describe('CP4 voice/chat intake pipeline', () => {
   });
 
   it('UNHAPPY PATH: no table available for the party is stated honestly, never overpromised', async () => {
-    const visitId = await startVisit(emptyRestaurantId);
-    await sendText(emptyRestaurantId, visitId, 'party of 2, arriving at 7:00pm');
-    const res = await sendText(emptyRestaurantId, visitId, 'Do you have a table for us?');
+    const guest = createSession(emptyRestaurantId);
+    await guest.start();
+    await guest.sendText('party of 2, arriving at 7:00pm');
+    const res = await guest.sendText('Do you have a table for us?');
     expect(res.status).toBe(201);
     expect(res.body.assistantMessage).toMatch(/don't have a table|no table/i);
     expect(res.body.visit.tableProposal).toBeNull();
   });
 
   it('UNHAPPY PATH: ASR mishears (low confidence) — asks the customer to repeat instead of guessing', async () => {
-    const visitId = await startVisit(restaurantId);
-    const res = await request(app.getHttpServer())
-      .post(`/restaurants/${restaurantId}/intake/${visitId}/turn`)
-      .send({ mode: 'voice', audioBase64: encodeFixtureTranscript('mumble mumble'), mimeType: 'text/plain;low-confidence' });
+    const guest = createSession(restaurantId);
+    await guest.start();
+    const res = await guest.sendVoice(encodeFixtureTranscript('mumble mumble'), 'text/plain;low-confidence');
     expect(res.status).toBe(201);
     expect(res.body.assistantMessage).toMatch(/didn't quite catch|say that again/i);
     expect(res.body.visit.partySize).toBeNull();
   });
 
   it('voice mode (high confidence) is processed identically to text', async () => {
-    const visitId = await startVisit(restaurantId);
-    const res = await request(app.getHttpServer())
-      .post(`/restaurants/${restaurantId}/intake/${visitId}/turn`)
-      .send({ mode: 'voice', audioBase64: encodeFixtureTranscript('party of 3, arriving at 6:30pm'), mimeType: 'audio/webm' });
+    const guest = createSession(restaurantId);
+    await guest.start();
+    const res = await guest.sendVoice(encodeFixtureTranscript('party of 3, arriving at 6:30pm'), 'audio/webm');
     expect(res.status).toBe(201);
     expect(res.body.visit.partySize).toBe(3);
   });
@@ -294,9 +332,11 @@ describe('CP4 voice/chat intake pipeline', () => {
     try {
       const startRes = await request(failingApp.getHttpServer()).post(`/restaurants/${restaurantId}/intake/start`).send();
       const visitId = startRes.body.visit.id as string;
+      const token = startRes.body.draftToken as string;
 
       const res = await request(failingApp.getHttpServer())
         .post(`/restaurants/${restaurantId}/intake/${visitId}/turn`)
+        .set('Authorization', `Bearer ${token}`)
         .send({ mode: 'text', text: 'party of 2, arriving at 7:00pm' });
       expect(res.status).toBe(201);
       expect(res.body.assistantMessage).toMatch(/trouble|try again/i);
@@ -307,28 +347,96 @@ describe('CP4 voice/chat intake pipeline', () => {
   });
 
   it('UNHAPPY PATH: silence/timeout — a draft past its expiry window gets an honest recap, never a silent continuation', async () => {
-    const visitId = await startVisit(restaurantId);
-    await sendText(restaurantId, visitId, 'party of 2, arriving at 7:00pm');
-    await sendText(restaurantId, visitId, "I'll have the Garlic Naan");
+    const guest = createSession(restaurantId);
+    await guest.start();
+    await guest.sendText('party of 2, arriving at 7:00pm');
+    await guest.sendText("I'll have the Garlic Naan");
 
-    // Fast-forward the draft's inactivity window into the past.
-    await rawPrisma.visit.update({ where: { id: visitId }, data: { draftExpiresAt: new Date(Date.now() - 1000) } });
+    // Fast-forward the draft's inactivity window into the past. (The
+    // guest's held token is untouched — it was only just reissued and its
+    // real cryptographic exp hasn't lapsed; only the DB column is faked
+    // here, to isolate this test to the business-timeout behavior, not
+    // token expiry. See docs/decisions.md for the token-expiry-vs-business-
+    // timeout interaction this deliberately does not exercise.)
+    await rawPrisma.visit.update({ where: { id: guest.visitId }, data: { draftExpiresAt: new Date(Date.now() - 1000) } });
 
-    const res = await sendText(restaurantId, visitId, 'sorry, still there');
+    const res = await guest.sendText('sorry, still there');
     expect(res.status).toBe(201);
     expect(res.body.reengaged).toBe(true);
     expect(res.body.assistantMessage).toMatch(/took a little while|still want to go ahead/i);
     expect(res.body.assistantMessage).toMatch(/Garlic Naan/i);
     expect(res.body.visit.status).toBe('draft');
 
-    const refreshed = await rawPrisma.visit.findUniqueOrThrow({ where: { id: visitId } });
+    const refreshed = await rawPrisma.visit.findUniqueOrThrow({ where: { id: guest.visitId } });
     expect(refreshed.draftExpiresAt!.getTime()).toBeGreaterThan(Date.now());
   });
 
   it('a visit from another restaurant 404s rather than leaking cross-tenant', async () => {
-    const visitId = await startVisit(restaurantId);
-    const res = await sendText(emptyRestaurantId, visitId, 'party of 2, arriving at 7:00pm');
+    const guest = createSession(restaurantId);
+    await guest.start();
+    // A structurally valid, correctly-signed token — just minted for the
+    // wrong restaurant relative to the URL it's presented against.
+    const res = await request(app.getHttpServer())
+      .post(`/restaurants/${emptyRestaurantId}/intake/${guest.visitId}/turn`)
+      .set('Authorization', `Bearer ${guest.token}`)
+      .send({ mode: 'text', text: 'party of 2, arriving at 7:00pm' });
     expect(res.status).toBe(404);
+  });
+
+  /**
+   * IDOR regression coverage (CP4 pre-merge fix — see docs/decisions.md).
+   * Every existing isolation test in this repo (menu-items.e2e-spec.ts,
+   * tenant-isolation.e2e-spec.ts) covers restaurant A vs restaurant B.
+   * None of them cover guest A vs guest B *inside the same restaurant* —
+   * exactly the gap `visitId`-only authorization left open, since two
+   * guests at the same restaurant share a `restaurantId` and the old code
+   * checked nothing else.
+   */
+  describe('IDOR: guest A cannot read or mutate guest B\'s draft at the same restaurant', () => {
+    it('guest B\'s token cannot GET or POST to guest A\'s visit, and guest A\'s draft is untouched afterward', async () => {
+      const guestA = createSession(restaurantId);
+      await guestA.start();
+      const addRes = await guestA.sendText("I'll have the Garlic Naan");
+      expect(addRes.status).toBe(201);
+      expect(addRes.body.visit.items).toHaveLength(1);
+
+      const stateBefore = await guestA.getState();
+      const turnCountBefore = stateBefore.body.turns.length;
+
+      const guestB = createSession(restaurantId);
+      await guestB.start();
+
+      // Guest B's own, validly-signed token — for guest B's own visit, not A's.
+      const readAttempt = await request(app.getHttpServer())
+        .get(`/restaurants/${restaurantId}/intake/${guestA.visitId}`)
+        .set('Authorization', `Bearer ${guestB.token}`);
+      expect(readAttempt.status).toBe(404);
+
+      const mutateAttempt = await request(app.getHttpServer())
+        .post(`/restaurants/${restaurantId}/intake/${guestA.visitId}/turn`)
+        .set('Authorization', `Bearer ${guestB.token}`)
+        .send({ mode: 'text', text: 'actually, remove the garlic naan' });
+      expect(mutateAttempt.status).toBe(404);
+
+      // Guest A's draft is byte-identical to before guest B's attempts.
+      const stateAfter = await guestA.getState();
+      expect(stateAfter.status).toBe(200);
+      expect(stateAfter.body.visit.items).toEqual(stateBefore.body.visit.items);
+      expect(stateAfter.body.turns.length).toBe(turnCountBefore);
+    });
+
+    it('a request with no token 404s on both routes', async () => {
+      const guest = createSession(restaurantId);
+      await guest.start();
+
+      const getRes = await request(app.getHttpServer()).get(`/restaurants/${restaurantId}/intake/${guest.visitId}`);
+      expect(getRes.status).toBe(404);
+
+      const postRes = await request(app.getHttpServer())
+        .post(`/restaurants/${restaurantId}/intake/${guest.visitId}/turn`)
+        .send({ mode: 'text', text: 'hello' });
+      expect(postRes.status).toBe(404);
+    });
   });
 
   it('Visit.status is never anything but draft anywhere in this suite', async () => {

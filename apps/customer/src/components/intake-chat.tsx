@@ -35,6 +35,11 @@ function getVoiceSupportServerSnapshot() {
  */
 export function IntakeChat({ restaurantId }: { restaurantId: string }) {
   const [visitId, setVisitId] = useState<string | null>(null);
+  // CP4 pre-merge fix: visitId alone used to be treated as sufficient to
+  // read/mutate a draft — it isn't a credential (it travels in the URL,
+  // server logs, browser history). This token is the real bearer
+  // credential now; held only in memory, never in localStorage or a URL.
+  const [draftToken, setDraftToken] = useState<string | null>(null);
   const [draft, setDraft] = useState<VisitDraftDto | null>(null);
   const [turns, setTurns] = useState<ConversationTurnDto[]>([]);
   const [mode, setMode] = useState<"text" | "voice">("text");
@@ -62,6 +67,7 @@ export function IntakeChat({ restaurantId }: { restaurantId: string }) {
         const body = (await res.json()) as IntakeTurnResponse & { message?: string };
         if (!res.ok) throw new Error(body.message ?? "Couldn't start your visit.");
         setVisitId(body.visit.id);
+        setDraftToken(body.draftToken);
         setDraft(body.visit);
         setTurns(body.turns);
       } catch (err) {
@@ -73,17 +79,18 @@ export function IntakeChat({ restaurantId }: { restaurantId: string }) {
   }, [restaurantId]);
 
   async function submitTurn(payload: { mode: "text"; text: string } | { mode: "voice"; audioBase64: string; mimeType: string }) {
-    if (!visitId) return;
+    if (!visitId || !draftToken) return;
     setBusy(true);
     setError(null);
     try {
       const res = await fetch(`/api/intake/${visitId}/turn`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${draftToken}` },
         body: JSON.stringify({ restaurantId, ...payload }),
       });
       const body = (await res.json()) as IntakeTurnResponse & { message?: string };
       if (!res.ok) throw new Error(body.message ?? "Something went wrong sending that.");
+      setDraftToken(body.draftToken); // reissued fresh on every response — see docs/decisions.md
       setDraft(body.visit);
       setTurns((prev) => [...prev, ...body.turns]);
     } catch (err) {

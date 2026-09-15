@@ -2,16 +2,17 @@ import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import type { ConversationTurnDto, IntakeTurnRequest, IntakeTurnResponse, VisitDraftDto } from '@raise/shared-types';
 import type { Prisma } from '../generated/prisma/client.js';
 import { TenantPrismaService } from '../prisma/tenant-prisma.service.js';
+import { IntakeTokenService } from '../auth/tokens/intake-token.service.js';
 import { ASR_PROVIDER, type AsrProvider } from './asr/asr-provider.interface.js';
 import { DIALOGUE_ENGINE, type DialogueEngine, type DialogueHistoryTurn } from './llm/dialogue-engine.interface.js';
 import { executeTool } from './tools/tool-definitions.js';
 import type { ToolExecutionContext } from './tools/tool-types.js';
 import { toVisitDraftDto, type VisitWithItemsAndTable } from './draft-mapper.js';
+import { DRAFT_INACTIVITY_WINDOW_MS } from './draft-policy.js';
 
 const VISIT_ITEMS_INCLUDE = { visitItems: { include: { menuItem: true } }, table: true } as const;
 
-/** How long a silent draft stays "still mid-conversation" before the next turn re-engages instead of continuing normally. See docs/decisions.md Part 8 Q3. */
-const DRAFT_INACTIVITY_WINDOW_MS = 15 * 60 * 1000;
+type RawConversationTurn = { id: string; role: 'customer' | 'system'; transcript: string; createdAt: Date };
 
 const GREETING = "Hi! Thanks for reaching out — how many will be joining you, and about when are you thinking of arriving?";
 const OUT_OF_SCOPE_ASR_ERROR = "Having trouble hearing you right now — you can keep going by typing instead.";
@@ -21,6 +22,7 @@ const LLM_UNAVAILABLE_MESSAGE = "Sorry, having some trouble right now — could 
 export class IntakeService {
   constructor(
     private readonly tenantPrisma: TenantPrismaService,
+    private readonly intakeTokens: IntakeTokenService,
     @Inject(ASR_PROVIDER) private readonly asr: AsrProvider,
     @Inject(DIALOGUE_ENGINE) private readonly dialogueEngine: DialogueEngine,
   ) {}
@@ -52,9 +54,16 @@ export class IntakeService {
       turns: [toTurnDto(turn)],
       assistantMessage: GREETING,
       reengaged: false,
+      draftToken: this.mintToken(visit),
     };
   }
 
+  /**
+   * Read-only reload/resume endpoint. Guarded by IntakeDraftGuard (see
+   * docs/decisions.md, the CP4 pre-merge IDOR fix) — no token is minted
+   * here since the caller must already be presenting a valid one to have
+   * reached this method at all.
+   */
   async getState(restaurantId: string, visitId: string): Promise<{ visit: VisitDraftDto; turns: ConversationTurnDto[] }> {
     const visit = await this.getVisitOrThrow(restaurantId, visitId);
     const turns = await this.tenantPrisma.forRestaurant(restaurantId, (tx) =>
@@ -68,6 +77,8 @@ export class IntakeService {
 
     // ASR/text resolution first — an ASR failure never reaches the dialogue
     // engine at all; the fallback IS the text/type path (docs/decisions.md Q1).
+    // Nothing has been persisted yet at this point, so there is no
+    // preceding turn to echo back on either of these early-exit paths.
     let customerText: string;
     if (request.mode === 'text') {
       customerText = request.text;
@@ -75,17 +86,20 @@ export class IntakeService {
       try {
         const transcription = await this.asr.transcribe({ base64: request.audioBase64, mimeType: request.mimeType });
         if (transcription.lowConfidence || !transcription.transcript.trim()) {
-          return this.respondWithSystemTurn(restaurantId, visit, "Sorry, I didn't quite catch that — could you say that again, or type it instead?", false);
+          return this.respondWithSystemTurn(restaurantId, visit, "Sorry, I didn't quite catch that — could you say that again, or type it instead?", false, []);
         }
         customerText = transcription.transcript;
       } catch {
-        return this.respondWithSystemTurn(restaurantId, visit, OUT_OF_SCOPE_ASR_ERROR, false);
+        return this.respondWithSystemTurn(restaurantId, visit, OUT_OF_SCOPE_ASR_ERROR, false, []);
       }
     }
 
     // Persist the customer's turn regardless of what happens next — the
     // transcript is real even if the dialogue engine subsequently fails.
-    await this.tenantPrisma.forRestaurant(restaurantId, (tx) =>
+    // Captured by reference (not re-queried later) so the response always
+    // reflects exactly the row this call created — see docs/decisions.md
+    // (the CP4 pre-merge fix to the "last two turns" bug).
+    const customerTurn = await this.tenantPrisma.forRestaurant(restaurantId, (tx) =>
       tx.conversationTurn.create({ data: { restaurantId, visitId, role: 'customer', transcript: customerText } }),
     );
 
@@ -95,7 +109,7 @@ export class IntakeService {
     if (isExpired) {
       const draft = toVisitDraftDto(visit);
       const recap = buildRecapMessage(draft);
-      return this.respondWithSystemTurn(restaurantId, visit, recap, true);
+      return this.respondWithSystemTurn(restaurantId, visit, recap, true, [customerTurn]);
     }
 
     const history = await this.loadHistory(restaurantId, visitId);
@@ -120,10 +134,10 @@ export class IntakeService {
     } catch {
       // LLM provider outage — the "provider outage" unhappy path. Never
       // fabricate a reply; say so honestly and keep the draft as-is.
-      return this.respondWithSystemTurn(restaurantId, visit, LLM_UNAVAILABLE_MESSAGE, false);
+      return this.respondWithSystemTurn(restaurantId, visit, LLM_UNAVAILABLE_MESSAGE, false, [customerTurn]);
     }
 
-    await this.tenantPrisma.forRestaurant(restaurantId, (tx) =>
+    const systemTurn = await this.tenantPrisma.forRestaurant(restaurantId, (tx) =>
       tx.conversationTurn.create({
         data: {
           restaurantId,
@@ -144,20 +158,28 @@ export class IntakeService {
     );
 
     const updatedVisit = await this.getVisitOrThrow(restaurantId, visitId);
-    const allTurns = await this.tenantPrisma.forRestaurant(restaurantId, (tx) =>
-      tx.conversationTurn.findMany({ where: { restaurantId, visitId }, orderBy: { createdAt: 'asc' } }),
-    );
-    // The customer's turn just persisted plus this exchange's system reply.
-    const newTurns = allTurns.slice(-2);
-
-    return { visit: toVisitDraftDto(updatedVisit), turns: newTurns.map(toTurnDto), assistantMessage, reengaged: false };
+    return {
+      visit: toVisitDraftDto(updatedVisit),
+      turns: [customerTurn, systemTurn].map(toTurnDto),
+      assistantMessage,
+      reengaged: false,
+      draftToken: this.mintToken(updatedVisit),
+    };
   }
 
+  /**
+   * `precedingTurns` lets every early-exit path echo back whatever it
+   * already persisted (typically the customer's own turn) alongside the
+   * system reply this method creates — see docs/decisions.md: an earlier
+   * version of this method silently dropped the customer's turn from the
+   * response on every one of these paths.
+   */
   private async respondWithSystemTurn(
     restaurantId: string,
     visit: VisitWithItemsAndTable,
     message: string,
     reengaged: boolean,
+    precedingTurns: RawConversationTurn[],
   ): Promise<IntakeTurnResponse> {
     const turn = await this.tenantPrisma.forRestaurant(restaurantId, (tx) =>
       tx.conversationTurn.create({ data: { restaurantId, visitId: visit.id, role: 'system', transcript: message } }),
@@ -171,7 +193,17 @@ export class IntakeService {
       );
     }
     const current = await this.getVisitOrThrow(restaurantId, visit.id);
-    return { visit: toVisitDraftDto(current), turns: [toTurnDto(turn)], assistantMessage: message, reengaged };
+    return {
+      visit: toVisitDraftDto(current),
+      turns: [...precedingTurns, turn].map(toTurnDto),
+      assistantMessage: message,
+      reengaged,
+      draftToken: this.mintToken(current),
+    };
+  }
+
+  private mintToken(visit: { id: string; restaurantId: string }): string {
+    return this.intakeTokens.sign(visit.id, visit.restaurantId);
   }
 
   private async loadHistory(restaurantId: string, visitId: string): Promise<DialogueHistoryTurn[]> {
@@ -198,7 +230,7 @@ export class IntakeService {
   }
 }
 
-function toTurnDto(turn: { id: string; role: 'customer' | 'system'; transcript: string; createdAt: Date }): ConversationTurnDto {
+function toTurnDto(turn: RawConversationTurn): ConversationTurnDto {
   return { id: turn.id, role: turn.role, transcript: turn.transcript, createdAt: turn.createdAt.toISOString() };
 }
 

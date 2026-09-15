@@ -78,6 +78,15 @@ export interface IntakeTurnResponse {
   assistantMessage: string;
   /** True when this response is the recap-and-reconfirm prompt triggered by a draft that sat past its expiry window. See docs/decisions.md Q3. */
   reengaged: boolean;
+  /**
+   * A signed, draft-scoped capability token — required as a bearer header
+   * on every subsequent call to this visit's `:visitId` routes. Reissued
+   * on every response (fresh ~15-minute expiry each time), so an actively
+   * used conversation never needs to worry about it lapsing; the client
+   * should always hold onto the most recently received one. See
+   * docs/decisions.md — the CP4 pre-merge IDOR fix.
+   */
+  draftToken: string;
 }
 
 export { allergenTagSchema };
