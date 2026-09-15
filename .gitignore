@@ -25,3 +25,6 @@ npm-debug.log*
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Playwright MCP scratch output (browser verification snapshots/logs)
+.playwright-mcp/
