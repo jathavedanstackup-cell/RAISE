@@ -17,3 +17,4 @@ export interface ServiceHealth {
 export * from "./menu-item.js";
 export * from "./staff-auth.js";
 export * from "./intake.js";
+export * from "./confirmation.js";
