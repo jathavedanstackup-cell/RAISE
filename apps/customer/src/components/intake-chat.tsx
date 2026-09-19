@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { ConversationTurnDto, IntakeTurnResponse, VisitDraftDto } from "@raise/shared-types";
+import type { ConfirmedVisitDto, ConversationTurnDto, IntakeTurnResponse, VisitDraftDto } from "@raise/shared-types";
+import { ConfirmPanel } from "./confirm-panel";
 
 // Browser feature detection that's intentionally allowed to differ between
 // the server-rendered HTML (no `window`) and the client's first real paint —
@@ -47,6 +48,7 @@ export function IntakeChat({ restaurantId }: { restaurantId: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
+  const [confirmedVisit, setConfirmedVisit] = useState<ConfirmedVisitDto | null>(null);
   const voiceSupported = useSyncExternalStore(subscribeNever, getVoiceSupportSnapshot, getVoiceSupportServerSnapshot);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -133,6 +135,35 @@ export function IntakeChat({ restaurantId }: { restaurantId: string }) {
   function stopRecording() {
     mediaRecorderRef.current?.stop();
     setRecording(false);
+  }
+
+  if (confirmedVisit) {
+    // A deliberately distinct view, not another chat bubble — this is the
+    // single most consequential moment in the whole flow (Part 5's trust
+    // boundary). See docs/concept-critique.md's finding that a confirmation
+    // buried at the same visual weight as ordinary conversation undersells it.
+    return (
+      <div className="flex w-full max-w-xl flex-col gap-4 rounded-lg border-4 border-black bg-zinc-50 p-6 text-center dark:border-white dark:bg-zinc-900">
+        <h1 className="text-2xl font-bold">You&apos;re booked!</h1>
+        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-left text-sm">
+          <dt className="font-medium">Party size</dt>
+          <dd>{confirmedVisit.partySize}</dd>
+          <dt className="font-medium">Arrival</dt>
+          <dd>{new Date(confirmedVisit.arrivalEta).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</dd>
+          <dt className="font-medium">Table</dt>
+          <dd>{confirmedVisit.table.label}</dd>
+        </dl>
+        {confirmedVisit.items.length > 0 && (
+          <ul className="list-disc pl-5 text-left text-sm">
+            {confirmedVisit.items.map((item) => (
+              <li key={item.id}>
+                {item.quantity}x {item.name}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    );
   }
 
   return (
@@ -224,6 +255,10 @@ export function IntakeChat({ restaurantId }: { restaurantId: string }) {
             ))}
           </ul>
         </div>
+      )}
+
+      {draft && visitId && draftToken && (
+        <ConfirmPanel restaurantId={restaurantId} visitId={visitId} draftToken={draftToken} draft={draft} onConfirmed={setConfirmedVisit} />
       )}
     </div>
   );

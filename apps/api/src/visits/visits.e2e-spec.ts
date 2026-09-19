@@ -223,6 +223,47 @@ describe('CP5 confirmation & booking flow', () => {
       const loserVisit = await rawPrisma.visit.findUniqueOrThrow({ where: { id: loserVisitId } });
       expect(loserVisit.status).toBe('draft');
     });
+
+    /**
+     * A distinct race from the one above: two DIFFERENT verified customers
+     * racing to claim the SAME unlinked draft (e.g. a shared or leaked
+     * draft link -- Visit.customerId starts null under the guest-first
+     * design). Surfaced by the broken-access-control review's own
+     * question for this checkpoint: "who can confirm a booking that isn't
+     * theirs?" Answer: whichever verified customer's request actually wins
+     * the same atomic conditional UPDATE that already protects against
+     * double-confirm -- the loser never gets silently bound to someone
+     * else's identity or someone else's booking.
+     */
+    it('two different verified customers racing to claim the same unlinked draft: exactly one is bound, the other gets a conflict, never a wrongly-shared booking', async () => {
+      const { dish, table } = await seedDishAndTable();
+      const { visitId, draftToken } = await buildReadyDraft(dish.name, table.label);
+      const tokenX = await verifyCustomer(`+1555${randomUUID().replace(/\D/g, '').slice(0, 7)}`);
+      const tokenY = await verifyCustomer(`+1555${randomUUID().replace(/\D/g, '').slice(0, 7)}`);
+
+      const [resX, resY] = await Promise.all([
+        request(app.getHttpServer())
+          .post(`/restaurants/${restaurantId}/visits/${visitId}/confirm`)
+          .set('Authorization', `Bearer ${draftToken}`)
+          .set('X-Customer-Token', tokenX)
+          .send(),
+        request(app.getHttpServer())
+          .post(`/restaurants/${restaurantId}/visits/${visitId}/confirm`)
+          .set('Authorization', `Bearer ${draftToken}`)
+          .set('X-Customer-Token', tokenY)
+          .send(),
+      ]);
+
+      const statuses = [resX.status, resY.status].sort();
+      expect(statuses).toEqual([201, 409]); // never [201, 201] -- never both bound
+
+      const dbVisit = await rawPrisma.visit.findUniqueOrThrow({ where: { id: visitId } });
+      expect(dbVisit.status).toBe('confirmed');
+      expect(dbVisit.customerId).not.toBeNull(); // bound to exactly one of the two, not both/neither
+
+      const events = await rawPrisma.visitStatusEvent.findMany({ where: { visitId, status: 'confirmed' } });
+      expect(events).toHaveLength(1); // one audit row, one actor -- not two
+    });
   });
 
   describe('UNHAPPY PATHS', () => {
