@@ -37,6 +37,10 @@ async function main() {
       settings: {
         avgPrepBufferMinutes: 5,
         tableHoldWindowMinutes: 20,
+        // CP6: with the 12-minute dish below, this reconciles the deck's
+        // worked example exactly (8:15 arrival -> 7:58 kitchen start ->
+        // 8:18 food out). See docs/decisions.md's CP6 entry.
+        expoBufferMinutes: 8,
       },
     },
   });

@@ -49,7 +49,12 @@ model Restaurant {
   timezone  String
   address   String
   phone     String
-  /// { avgPrepBufferMinutes: number, tableHoldWindowMinutes: number }
+  /// { avgPrepBufferMinutes: number, tableHoldWindowMinutes: number, expoBufferMinutes: number }
+  /// CP6 adds `expoBufferMinutes` (plate-to-table time added after the
+  /// longest item's prep finishes, used for `food_out_target`) alongside
+  /// CP1's original two keys -- flagged per Rule #4 in docs/decisions.md:
+  /// the deck's worked example cannot reconcile `food_out_target` from
+  /// `avgPrepBufferMinutes` alone, see the CP6 entry for the arithmetic.
   settings  Json
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -179,6 +184,20 @@ model Visit {
 
   tableId         String?   @map("table_id")
   tableAssignedAt DateTime? @map("table_assigned_at")
+
+  /// CP6: the timing engine's current computed prediction, not an audit
+  /// fact -- overwritten on every recompute (initial confirm, ETA drift,
+  /// order-item change), unlike VisitStatusEvent which is append-only.
+  /// Null until a confirmed visit has a table and items to compute from.
+  /// "Awaiting accept" is deliberately NOT a persisted VisitStatus value:
+  /// it's the derived condition `status = 'confirmed' AND
+  /// kitchenStartTarget <= now()`, not a state a background job writes.
+  /// See docs/decisions.md's CP6 entry.
+  kitchenStartTarget DateTime? @map("kitchen_start_target")
+  /// CP6: paired prediction for when food should hit the table. See
+  /// docs/decisions.md for why this needs a second buffer distinct from
+  /// `avgPrepBufferMinutes` to reconcile the deck's worked example.
+  foodOutTarget      DateTime? @map("food_out_target")
 
   /// CP4: refreshed to now()+15m on every processed intake turn while
   /// status is still `draft`. A draft's own inactivity window — not the
