@@ -14,12 +14,7 @@ Format per entry:
 
 ---
 
-<!-- Two decisions are already known to be pending, per docs/execution-guide.md §4 — fill these in once the restaurant interviews from docs/user-research-plan.md happen, and do not start CP6 or CP8 until they're filled in:
-
-## Kitchen auto-start vs. staff accept-step
-- Affects checkpoint(s): CP6, CP8
-- Decision: TBD — pending restaurant interviews
-- Why: TBD
+<!-- One decision is still pending, per docs/execution-guide.md §4 — fill this in once the restaurant interviews from docs/user-research-plan.md happen, and do not start CP8's allergy-flag work until it's filled in:
 
 ## Allergy flag: passive display vs. staff acknowledgment
 - Affects checkpoint(s): CP8
@@ -28,6 +23,17 @@ Format per entry:
 
 -->
 
+## Kitchen auto-start vs. staff accept-step
+- **Date**: 2026-09-19
+- **Affects checkpoint(s)**: CP6 (timing engine), CP8 (kitchen display — shares this decision, per `docs/execution-guide.md` §4)
+- **Status**: **PROVISIONAL** — revisit trigger named below. This is not the final answer, it's the answer that lets CP6/CP8 proceed without guessing.
+- **Decision**: Staff accept-step. The computed `kitchen_start_time` raises a prompt for kitchen staff; prep timing only counts as started once a staff member explicitly accepts it. The system never auto-fires `kitchen_started` on its own.
+- **Why** (evidence, not just preference):
+  - **Reversibility asymmetry is the deciding factor, not a guess at kitchen preference.** Going from staff-accept to auto-start later is a feature-flag flip — remove the prompt, let the computed time write the status directly. Going the other way — discovering after CP8 ships that staff actually wanted a checkpoint — means retrofitting a UI surface, a notification path, and a new state transition onto a kitchen display that was built assuming none of that existed. One direction is cheap to undo; the other isn't. Absent real evidence yet, the cheap-to-reverse option is the correct default.
+  - **Consistency with RAISE's own established stance.** Part 5 of the production plan, and what CP5 just spent an entire checkpoint enforcing as a hard trust boundary, is that nothing consequential happens without an explicit human affirmative action — a customer's booking doesn't confirm itself on a computed timestamp, a person taps "confirm." Auto-starting the kitchen on a computed `kitchen_start_time` is the same category of action — a system-computed instant triggering a real-world consequence — with the human step removed. Staff accept-step keeps CP6 consistent with the precedent CP5 just set, rather than quietly contradicting it one checkpoint later.
+  - **Honest counter-argument, recorded rather than hidden**: the accept-step adds friction at exactly the moment speed is the entire point of the product — a five-minute head start on prep is the deck's whole pitch. A kitchen under dinner-rush pressure may tap "accept" reflexively without actually checking the ticket, which buys none of the safety the checkpoint intends and only costs the friction. This is a real, accepted cost, not an oversight.
+  - **PROVISIONAL, with a named revisit trigger**: after this has run in 10 real services, if staff accept more than 95% of prompts without modifying the timing (i.e., the accept step is consistently a rubber stamp, not a real check), auto-start should be revisited as the better default — the evidence at that point would say the human step isn't catching anything the computed time doesn't already get right. Until that evidence exists, staff accept-step stands.
+- **Unblocks**: CP6 may start now. CP8 is also unblocked by this same entry, per its own gate note.
 ## ORM / migration tool: Prisma (v7, pinned)
 - **Date**: 2026-09-13
 - **Affects checkpoint(s)**: CP1 (and every checkpoint that touches the schema after)
