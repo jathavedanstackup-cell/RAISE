@@ -222,6 +222,17 @@ model VisitStatusEvent {
   status       VisitStatus
   occurredAt   DateTime    @default(now()) @map("occurred_at")
 
+  /// CP5: "who/when/how" — occurredAt already gives "when"; these three
+  /// give "who" (actorType/actorId) and "how" (mechanism). All nullable
+  /// because CP1-CP4 never actually wrote a VisitStatusEvent row (the
+  /// full transition log is a CP6 deliverable per Part 6) — CP5 is the
+  /// first checkpoint to populate them, for the one transition it owns
+  /// (draft -> confirmed). e.g. actorType="customer", actorId=Customer.id,
+  /// mechanism="explicit_confirm_endpoint".
+  actorType String? @map("actor_type")
+  actorId   String? @map("actor_id")
+  mechanism String? @map("mechanism")
+
   visit Visit @relation(fields: [visitId], references: [id], onDelete: Cascade)
 
   @@index([restaurantId])
