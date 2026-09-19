@@ -419,7 +419,14 @@ describe('CP5 confirmation & booking flow', () => {
         if (!entry.name.endsWith('.ts') || entry.name.endsWith('.spec.ts') || entry.name.endsWith('.e2e-spec.ts')) continue;
         if (full === path.join(srcRoot, 'visits', 'visits.service.ts')) continue;
         const contents = await readFile(full, 'utf8');
-        if (/status:\s*['"]confirmed['"]/.test(contents) || /VisitStatus\.confirmed/.test(contents)) {
+        // CP6 found this regex too broad: it matched a `where:` precondition
+        // check (a read-guard, e.g. "only touch rows still in 'confirmed'")
+        // exactly as readily as an actual `data:` write. Scoped to Prisma's
+        // own `data:` write-argument shape so a legitimate read-guard
+        // elsewhere (timing.service.ts checks `where: { status: 'confirmed' }`
+        // before recomputing, same style CP5 itself uses) doesn't trip a test
+        // whose actual intent is "nothing but visits.service.ts WRITES this."
+        if (/data:\s*\{[^}]*status:\s*['"]confirmed['"]/.test(contents) || /VisitStatus\.confirmed/.test(contents)) {
           offenders.push(full);
         }
       }
