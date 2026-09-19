@@ -128,10 +128,17 @@ export class TimingService {
       throw err;
     }
 
-    await tx.visit.updateMany({
-      where: { id: visitId, restaurantId },
+    // Re-assert `status = 'confirmed'` in the WHERE clause rather than trusting the findFirst above.
+    // These transactions run at Read Committed, so a concurrent acceptKitchenStart could commit
+    // between that read and this write; an unguarded write would then rewrite the targets of a visit
+    // whose kitchen has already started -- precisely the "you cannot un-cook food" case. Making the
+    // write itself conditional collapses check-and-write into one atomic step, the same fix CP5 used
+    // for the confirm/table claims.
+    const written = await tx.visit.updateMany({
+      where: { id: visitId, restaurantId, status: 'confirmed' },
       data: { kitchenStartTarget: targets.kitchenStartTarget, foodOutTarget: targets.foodOutTarget },
     });
+    if (written.count === 0) return { applied: false, rejection: 'visit_not_confirmed' };
 
     this.events.emit(
       VISIT_TIMING_RECOMPUTED,

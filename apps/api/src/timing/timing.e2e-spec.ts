@@ -359,6 +359,32 @@ describe('CP6 timing engine', () => {
       await walk(srcRoot);
       expect(offenders).toEqual([]);
     });
+
+    /**
+     * Second static invariant, same family, guarding the *other* half of
+     * "you cannot un-cook food". `recomputeTargets` reads the visit, checks
+     * `status === 'confirmed'`, then writes the two target columns. These
+     * transactions run at Read Committed, so an `acceptKitchenStart` that
+     * commits between that read and that write would leave the unguarded
+     * write free to retarget a visit whose kitchen had already started --
+     * a check-then-write race, not a behavioural bug any single-threaded
+     * test would ever catch. The fix is to re-assert the status in the
+     * WHERE clause so check and write are one atomic step; this test pins
+     * that the guard stays there.
+     *
+     * Proven red/green: removing `status: 'confirmed'` from that WHERE
+     * clause makes this test fail; restoring it makes it pass.
+     */
+    it('TRUST BOUNDARY: the timing-target write is itself conditional on status = confirmed, not just the read before it', async () => {
+      const { readFile } = await import('node:fs/promises');
+      const path = await import('node:path');
+      const source = await readFile(path.resolve(import.meta.dirname, 'timing.service.ts'), 'utf8');
+
+      // Isolate the updateMany that writes the target columns, and assert its own WHERE clause carries the status guard.
+      const targetWrite = /updateMany\(\{\s*where:\s*\{([^}]*)\},\s*data:\s*\{[^}]*kitchenStartTarget[^}]*\}/.exec(source);
+      expect(targetWrite, 'could not locate the timing-target updateMany -- if it was refactored, update this invariant').not.toBeNull();
+      expect(targetWrite![1]).toMatch(/status:\s*['"]confirmed['"]/);
+    });
   });
 
   describe('tenant isolation', () => {
