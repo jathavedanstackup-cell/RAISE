@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
+import { WsAdapter } from '@nestjs/platform-ws';
 import request from 'supertest';
 import { AppModule } from '../app.module.js';
 import { PrismaClient } from '../generated/prisma/client.js';
@@ -32,6 +33,8 @@ describe('CP6 timing engine', () => {
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleRef.createNestApplication();
+    // CP7 added a @WebSocketGateway() to AppModule -- see visits.e2e-spec.ts's identical comment.
+    app.useWebSocketAdapter(new WsAdapter(app));
     await app.init();
     timing = app.get(TimingService);
     passwords = app.get(PasswordService);

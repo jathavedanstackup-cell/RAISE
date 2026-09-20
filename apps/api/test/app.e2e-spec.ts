@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
+import { WsAdapter } from '@nestjs/platform-ws';
 import request from 'supertest';
 import { AppModule } from './../src/app.module.js';
 
@@ -12,6 +13,9 @@ describe('AppController (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
+    // CP7 added a @WebSocketGateway() to AppModule -- Nest's default driver detection needs
+    // socket.io, which this repo doesn't install (uses native ws instead).
+    app.useWebSocketAdapter(new WsAdapter(app));
     await app.init();
   });
 
