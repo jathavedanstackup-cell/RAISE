@@ -19,7 +19,11 @@ const ALLERGEN_LABELS: Record<AllergenTag, string> = {
  * API would reject, and no way for an owner to type something CP8's
  * kitchen display couldn't render as a flagged tag.
  */
-export function AllergenFields({ selected }: { selected?: readonly AllergenTag[] }) {
+export function AllergenFields({
+  selected,
+}: {
+  selected?: readonly AllergenTag[];
+}) {
   return (
     <fieldset className="flex flex-col gap-2">
       <legend className="text-sm font-medium text-foreground">Allergens</legend>
@@ -27,7 +31,10 @@ export function AllergenFields({ selected }: { selected?: readonly AllergenTag[]
         {ALLERGEN_TAGS.map((tag) => (
           // py-1 clears the WCAG 2.2 SC 2.5.8 24px target-size minimum —
           // the bare text line-height alone measured under it.
-          <label key={tag} className="flex items-center gap-2 py-1 text-sm text-foreground">
+          <label
+            key={tag}
+            className="flex items-center gap-2 py-1 text-sm text-foreground"
+          >
             <input
               type="checkbox"
               name="allergens"
@@ -44,8 +51,13 @@ export function AllergenFields({ selected }: { selected?: readonly AllergenTag[]
 }
 
 /** Small dark pill reusing the exact measured dark-bg/orange-fg pairing from docs/accessibility-audit.md. */
-export function AllergenChips({ allergens }: { allergens: readonly AllergenTag[] }) {
-  if (allergens.length === 0) return <span className="text-sm text-text-muted">None listed</span>;
+export function AllergenChips({
+  allergens,
+}: {
+  allergens: readonly AllergenTag[];
+}) {
+  if (allergens.length === 0)
+    return <span className="text-sm text-text-muted">None listed</span>;
   return (
     <ul className="flex flex-wrap gap-1.5" aria-label="Allergens">
       {allergens.map((tag) => (

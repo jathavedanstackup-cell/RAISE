@@ -5,6 +5,7 @@ import { StaffRestaurantGuard } from '../auth/guards/staff-restaurant.guard.js';
 import { RolesGuard } from '../auth/guards/roles.guard.js';
 import { Roles } from '../auth/decorators/roles.decorator.js';
 import type { StaffRequest } from '../auth/guards/request.types.js';
+import { RestaurantTimezoneService } from '../prisma/restaurant-timezone.service.js';
 import { KitchenService } from './kitchen.service.js';
 
 /**
@@ -15,14 +16,20 @@ import { KitchenService } from './kitchen.service.js';
 @Controller('restaurants/:restaurantId/kitchen')
 @UseGuards(StaffJwtGuard, StaffRestaurantGuard, RolesGuard)
 export class KitchenDisplayController {
-  constructor(private readonly kitchen: KitchenService) {}
+  constructor(
+    private readonly kitchen: KitchenService,
+    private readonly timezones: RestaurantTimezoneService,
+  ) {}
 
   /** The prep queue: due tickets only, ordered by computed kitchen start, not by order-in time. */
   @Get('queue')
   @Roles('kitchen', 'owner', 'foh')
   async queue(@Req() request: StaffRequest): Promise<KitchenQueueResponse> {
-    const tickets = await this.kitchen.listQueue(request.restaurantId);
-    return { tickets };
+    const [tickets, timezone] = await Promise.all([
+      this.kitchen.listQueue(request.restaurantId),
+      this.timezones.forRestaurant(request.restaurantId),
+    ]);
+    return { tickets, timezone };
   }
 
   /** Records that a human confirmed they saw the allergy flags. Does not change what is displayed. */

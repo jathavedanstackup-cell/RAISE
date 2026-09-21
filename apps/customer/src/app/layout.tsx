@@ -12,9 +12,10 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+/** CP10: the description shipped as "scaffold placeholder (CP0)" — this is a guest-facing page. */
 export const metadata: Metadata = {
-  title: "RAISE — Customer",
-  description: "RAISE customer app — scaffold placeholder (CP0)",
+  title: "Plan your visit",
+  description: "Tell us when you're arriving and what you'd like, before you get to the table.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

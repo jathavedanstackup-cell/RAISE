@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Prisma } from '../generated/prisma/client.js';
 import { OnEvent } from '@nestjs/event-emitter';
 import { VISIT_CONFIRMED, VisitConfirmedEvent } from '../realtime/realtime.events.js';
 import { VISIT_TIMING_RECOMPUTED, VisitTimingRecomputedEvent } from '../timing/timing.events.js';
@@ -72,9 +73,21 @@ export class NotificationSubscriber {
     try {
       await work();
     } catch (err) {
-      // Swallowed on purpose: see the class comment. The domain operation
-      // that emitted this event has already committed and must not be
-      // affected by a notification failure.
+      // Same reasoning as TimingSubscriber: these handlers outlive the
+      // request that emitted the event, so a visit deleted in between shows
+      // up here as a missing row or a foreign-key violation on the claim
+      // insert. That is a race with a deletion, not a notification failure,
+      // and it does not deserve an ERROR line.
+      const vanished =
+        err instanceof NotFoundException ||
+        (err instanceof Prisma.PrismaClientKnownRequestError && (err.code === 'P2003' || err.code === 'P2025'));
+      if (vanished) {
+        this.logger.debug(`Visit ${visitId} disappeared before ${eventName} could be notified`);
+        return;
+      }
+      // Otherwise swallowed on purpose: see the class comment. The domain
+      // operation that emitted this event has already committed and must not
+      // be affected by a notification failure.
       this.logger.error(`Notification handling failed for ${eventName} (visitId=${visitId})`, err as Error);
     }
   }

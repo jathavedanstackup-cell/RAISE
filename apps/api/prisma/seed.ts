@@ -1,5 +1,6 @@
 import { config as loadEnv } from 'dotenv';
 import { resolve } from 'node:path';
+import * as argon2 from 'argon2';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client.js';
 
@@ -25,24 +26,33 @@ const RESTAURANT_ID = 'demo-spice-route';
 async function main() {
   console.log('Seeding demo restaurant "Spice Route"...');
 
+  const demoRestaurant = {
+    name: 'Spice Route',
+    timezone: 'America/Los_Angeles',
+    address: '221 Market Street, San Francisco, CA 94105',
+    phone: '+14155550142',
+    settings: {
+      avgPrepBufferMinutes: 5,
+      tableHoldWindowMinutes: 20,
+      // CP6: with the 12-minute dish below, this reconciles the deck's
+      // worked example exactly (8:15 arrival -> 7:58 kitchen start ->
+      // 8:18 food out). See docs/decisions.md's CP6 entry.
+      expoBufferMinutes: 8,
+    },
+  };
+
+  // CP10: this was `update: {}`, which made the seed idempotent in the
+  // wrong sense -- it could create a restaurant but could never correct
+  // one. The demo restaurant was seeded before CP6 added
+  // `expoBufferMinutes`, so its settings stayed one key short forever,
+  // and `recomputeTargets` silently refused to compute any timing at all.
+  // Re-running the seed did nothing, because the row already existed.
+  // Idempotent should mean "converge to the seeded state", not "never
+  // touch what is already there".
   const restaurant = await prisma.restaurant.upsert({
     where: { id: RESTAURANT_ID },
-    update: {},
-    create: {
-      id: RESTAURANT_ID,
-      name: 'Spice Route',
-      timezone: 'America/Los_Angeles',
-      address: '221 Market Street, San Francisco, CA 94105',
-      phone: '+14155550142',
-      settings: {
-        avgPrepBufferMinutes: 5,
-        tableHoldWindowMinutes: 20,
-        // CP6: with the 12-minute dish below, this reconciles the deck's
-        // worked example exactly (8:15 arrival -> 7:58 kitchen start ->
-        // 8:18 food out). See docs/decisions.md's CP6 entry.
-        expoBufferMinutes: 8,
-      },
-    },
+    update: demoRestaurant,
+    create: { id: RESTAURANT_ID, ...demoRestaurant },
   });
 
   const menuItems = [
@@ -139,6 +149,37 @@ async function main() {
       update: {},
       create: { ...table, restaurantId: restaurant.id },
     });
+  }
+
+  // A staff owner to sign in with. Without one the dashboard and kitchen
+  // display cannot be opened at all -- which is how CP10 (the first
+  // checkpoint that renders the staff UI in a real browser) discovered
+  // this gap.
+  //
+  // Refuses to run against a production NODE_ENV: a seeded owner with a
+  // known password is a local-development convenience, and the one way it
+  // becomes a vulnerability is by existing somewhere real. The password is
+  // overridable via SEED_STAFF_PASSWORD but is deliberately NOT read from
+  // a committed default in .env -- a developer changing it should have to
+  // say so.
+  if (process.env.NODE_ENV === 'production') {
+    console.log('NODE_ENV=production — skipping the demo staff user on purpose.');
+  } else {
+    const email = process.env.SEED_STAFF_EMAIL ?? 'owner@spiceroute.test';
+    const password = process.env.SEED_STAFF_PASSWORD ?? 'correct-horse-battery-staple';
+    const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
+
+    const user = await prisma.user.upsert({
+      where: { email },
+      update: { passwordHash },
+      create: { email, passwordHash, name: 'Demo Owner' },
+    });
+    await prisma.staffMembership.upsert({
+      where: { userId_restaurantId: { userId: user.id, restaurantId: restaurant.id } },
+      update: { role: 'owner' },
+      create: { userId: user.id, restaurantId: restaurant.id, role: 'owner' },
+    });
+    console.log(`Demo staff owner: ${email} / ${password}`);
   }
 
   console.log(

@@ -7,6 +7,7 @@ import { Roles } from '../auth/decorators/roles.decorator.js';
 import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
 import type { StaffRequest } from '../auth/guards/request.types.js';
 import { z } from 'zod';
+import { RestaurantTimezoneService } from '../prisma/restaurant-timezone.service.js';
 import { DashboardService } from './dashboard.service.js';
 import { TableReassignmentService } from './table-reassignment.service.js';
 
@@ -18,13 +19,21 @@ const reassignTableSchema = z.object({ newTableId: z.string().min(1) });
 export class DashboardController {
   constructor(
     private readonly dashboard: DashboardService,
+    private readonly timezones: RestaurantTimezoneService,
     private readonly reassignment: TableReassignmentService,
   ) {}
 
   @Get('visits')
   async listVisits(@Req() request: StaffRequest): Promise<DashboardListResponse> {
-    const visits = await this.dashboard.listInboundVisits(request.restaurantId);
-    return { visits };
+    // The restaurant's timezone travels with the list. CP10 found this
+    // screen rendering every time in the BROWSER's zone -- correct only
+    // by coincidence, and wrong for any host not sitting in the same
+    // zone as the restaurant.
+    const [visits, timezone] = await Promise.all([
+      this.dashboard.listInboundVisits(request.restaurantId),
+      this.timezones.forRestaurant(request.restaurantId),
+    ]);
+    return { visits, timezone };
   }
 
   @Get('tables')

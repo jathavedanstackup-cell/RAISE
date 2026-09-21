@@ -1,0 +1,22 @@
+# CP10. This repo had no .gitattributes, so line endings were whatever each
+# tool on each machine felt like. During CP10 the entire working tree was
+# rewritten to CRLF by something outside the repo, which showed up as 219
+# modified files with real changes in 24 of them -- a diff nobody can review
+# and a PR nobody should approve.
+#
+# `text=auto eol=lf` normalises every text file to LF in the repository and on
+# checkout, on every platform. Checked-in binaries are listed explicitly so
+# they are never touched.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.zip binary

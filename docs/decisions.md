@@ -498,3 +498,137 @@ Nothing about notifications is client-triggerable. Every send originates from a 
 The deterministic proofs are the two tests next to it: one inserts a claim row as if another instance had won and asserts nothing is sent and the foreign claim is not touched; the other asserts against the live database that the unique index on `(visit_id, type)` actually exists. The second matters most. Application code can be rewritten into a check-then-send by any future author; that index is what turns such a rewrite into a loud failure instead of a quiet second text to a guest.
 
 Both were proven red — an `upsert`-based claim (the most plausible accidental "fix" for the P2002 noise) fails five tests in this suite, including both deterministic ones.
+
+## CP10 — design QA & accessibility: what rendering it in a browser found
+
+**Status: DECIDED.** Findings triaged below; deferrals are named, with reasons, per this checkpoint's own "done when".
+
+This was the first checkpoint that ran the product rather than testing it. The stack came up, a table was booked through the real customer flow, and the result was read on the real dashboard and the real kitchen display. Nine backend checkpoints had been green throughout. The two most serious findings below were invisible to every one of those tests, and both were found in the first five minutes of using the thing.
+
+### The automated result first, because it is the least interesting part
+
+axe-core 4.10.2, WCAG 2.1 A + AA, against the live DOM of all five screens — customer intake, customer confirmation, login, dashboard, kitchen display — in light and dark, at 1440px and at 375px:
+
+| | |
+|---|---|
+| Violations | **1** (`scrollable-region-focusable`, serious — fixed) |
+| Contrast failures | **0**, in either scheme |
+| Touch targets below 44x44 at 375px | **0** |
+| Horizontal scroll at 375px | none |
+
+The colour work from CP3 holds up exactly as the concept audit predicted: carrying the measured pairings across instead of re-deriving a palette meant nothing regressed. That audit's priority fix #2 (touch targets) is satisfied — every interactive target on the guest flow measures 44px or more at phone width.
+
+The single violation is instructive: it only appears once the conversation is long enough for the transcript to overflow. A first paint is clean. Auditing a freshly-loaded page would have missed it, which is the argument for driving a real session rather than loading a URL and running a scanner.
+
+Everything below is something no automated checker reports.
+
+### Finding 1 — the product did not work end to end
+
+A booking made through the real guest flow arrived on the dashboard correctly, with its allergy flag, and showed **"Kitchen start —, Food out —"**. The kitchen display said **"Nothing due yet."**
+
+Nothing ever computed the targets. CP6 built the timing engine and deliberately left the trigger to "whichever checkpoint first needs it", and no checkpoint since had claimed it — CP7 renders targets, CP8 queues on them, CP9 alerts on changes to them, and each was tested by calling `recompute` itself. The gap sat precisely between them, which is where this class of gap always sits.
+
+Fixed with `TimingSubscriber`, on `VISIT_CONFIRMED`.
+
+**Why a subscriber and not a call inside `VisitsService.confirm`.** `confirm` is CP5's trust boundary — the only method permitted to write `status = 'confirmed'`. A timing computation inside it either rolls back a booking the guest has already been told is theirs, or needs a try/catch that quietly makes the most consequential write in the product partially transactional. A visit without targets is recoverable: staff have a recompute endpoint, and any later ETA change recomputes anyway. A booking that silently didn't happen is not recoverable. The asymmetry decides it.
+
+### Finding 2 — `Restaurant.timezone` was written by the seed and read by nothing
+
+The column has existed since CP1. Three surfaces, three different wrong answers to the same question:
+
+- dashboard and kitchen display — `toLocaleTimeString([])`, the **browser's** zone
+- booking-confirmation SMS — `toISOString().slice(11, 16)`, **UTC**
+- `Restaurant.timezone` — read nowhere at all
+
+A guest booked for 8:15 PM at a Los Angeles restaurant received a text reading **"arriving 14:45"**. That one shipped in CP9, roughly an hour before this checkpoint caught it.
+
+Every e2e test seeds `timezone: 'UTC'` while the dev machine runs in another zone, which is exactly why a green suite said nothing. A test fixture that pins the one variable the bug lives in cannot see the bug.
+
+**The restaurant's timezone is correct everywhere, including for the guest.** "Arriving 8:15" is a promise about the restaurant's clock. A traveller whose phone is still on another zone must not be shown a different number than the host is looking at — the two of them are going to talk to each other.
+
+Implemented as one function (`formatClockTime`, in `@raise/shared-types`) and one reader (`RestaurantTimezoneService`). The zone travels with the dashboard and kitchen payloads; instants stay instants on the wire, preserving CP6's rule that arithmetic happens on instants and formatting happens at the edge. This is the formatting the edge could not previously do.
+
+### Finding 3 — a hydration mismatch on the screen whose whole job is times
+
+React reported the dashboard's server HTML rendering `07:00 pm` where the browser rendered `07:00 PM`. `toLocaleTimeString` is not deterministic across ICU versions, so React discarded and regenerated the subtree on every load.
+
+`formatClockTime` fixes the locale, the hour cycle and the case, and normalises the narrow no-break space that ICU versions disagree about. Server and browser now produce byte-identical strings. The timezone fix and this one are the same fix.
+
+### Accessibility findings no scanner reports
+
+The concept audit (`docs/accessibility-audit.md`) listed five things it said could not be checked until real screens existed. Four of the five were genuine gaps. Recording that honestly, because a pre-build audit that predicts real defects and is then not re-run is worse than no audit.
+
+- **Item #4, live-region announcement for dashboard updates — was missing, exactly as predicted.** A booking arriving over the WebSocket was a purely visual event. Added to both the dashboard and the kitchen display, announcing only what is genuinely new: a live region that re-reads the whole list on every refetch teaches a host to tune it out, and then they miss the one arrival that mattered. The kitchen announcement names allergy flags in its first sentence — it is the one thing on that screen that can hurt someone.
+- **Focus was dropped to `<body>` at every step of the confirm flow.** Each step unmounts the control just pressed: "Send code" becomes a code field, "Verify" becomes the confirm button, "Confirm booking" replaces the entire view. Three times, a guest using a keyboard or a screen reader pressed a button and was left with neither focus nor any announcement — including at the moment the booking succeeded, the single most consequential moment in the product, which happened in complete silence. Focus is now moved and each step announces itself.
+- **Item #1, keyboard access to the voice/type toggle — already satisfied** by CP4, which implemented it as a real labelled pair of buttons with `aria-pressed`. Recorded as a pass.
+- **Item #5, focus order through the dashboard** — verified logical. Pass.
+- **The table-reassignment `<select>` acted on its own `onChange`.** Keyboard users change a select's value merely by arrowing through it, so arrowing past T2 on the way to T7 moved a real party to the wrong table mid-service. WCAG 3.2.2 On Input. The choice and the action are now separate controls.
+- **The "Food out" button used `disabled`**, which is not focusable — so the keyboard user who most needed the adjacent "Accept the prep prompt first" text could never reach the button or hear the explanation. Now `aria-disabled` with `aria-describedby`.
+- **No `<main>` on any staff page.** Added, with `<nav>` and `<header>`.
+- **Emoji inside accessible names** ("🎤 Speak" announced as "microphone Speak"). Now `aria-hidden`.
+- **Two `<h1>`s** on the confirmation view. The page owns the `<h1>`; the panel is an `<h2>`.
+
+### Found by using it, not by auditing it
+
+- **The seed created no staff user at all.** The dashboard and kitchen display could not be opened by anyone. Nine checkpoints of staff-facing features and no way to sign in — because every test mints its own user. Added, dev-only, refusing to run under `NODE_ENV=production`.
+- **Signing in lands on `/menu`, which linked to neither the dashboard nor the kitchen.** A host could reach their own service screens only by typing a URL.
+- **The login page still said "Manage your restaurant's menu"** — true in CP3, when that was all this app did.
+- **Both apps still shipped `description: "… scaffold placeholder (CP0)"`**, and every route in the staff app shared one `<title>`, so "Tonight — Inbound", the pass and the menu admin were indistinguishable in a tab strip, in history, and to a screen reader's page-title announcement (WCAG 2.4.2).
+
+### e2e `hookTimeout` raised to 60s
+
+Eight e2e suites failed with "Hook timed out in 10000ms" during this checkpoint; every one passed when run alone. Each boots an entire Nest application and opens a Postgres pool in `beforeAll`, which is comfortably under 10s on an idle machine and not under 10s on a loaded one. A setup timeout whose outcome depends on machine load is not a test result, and a suite that flakes under load is one people learn to re-run rather than read.
+
+### Subscriber logging: a race with deletion is not an error
+
+`TimingSubscriber` and `NotificationSubscriber` both handle `VISIT_CONFIRMED`, and both run after the request that emitted it has returned. A visit deleted in the interval surfaces as a `NotFoundException` or a foreign-key violation on the claim insert. Both now log at debug. An ERROR line that appears routinely is how a log stops being read, and these subscribers are the two places in the system most likely to produce one.
+
+### `.gitattributes`, added here because CP10 is where it hurt
+
+The repo had none. During this checkpoint the entire working tree was rewritten to CRLF by something outside the repo: 219 modified files, real changes in 24. A diff nobody can review is a review nobody performs. `* text=auto eol=lf` normalises on every platform; checked-in binaries are listed explicitly.
+
+### Finding 4 — the fix in Finding 1 was necessary and not sufficient
+
+Wiring `TimingSubscriber` into `VISIT_CONFIRMED` was correct, and the product still did not work. Re-running the whole flow in a browser after the fix produced the same "Kitchen start —, Food out —" — but this time with a reason in the log: `visit_not_ready`.
+
+The demo restaurant's `settings` held `avgPrepBufferMinutes` and `tableHoldWindowMinutes` and no `expoBufferMinutes`. `recomputeTargets` requires both buffers, so it refused to compute anything, for every visit, forever.
+
+The cause was the seed: `prisma.restaurant.upsert({ where, update: {}, create: {...} })`. `expoBufferMinutes` was added to the seeded settings in CP6, long after the demo restaurant row existed — and `update: {}` means an existing row is never corrected. Re-running the seed did nothing, because the row was already there. Idempotent should mean "converge to the seeded state", not "never touch what already exists"; the seed now updates as well as creates.
+
+Two lessons worth keeping, because both are about how this was missed:
+
+1. **A fix verified only by the tests that motivated it is not verified.** Every backend test constructs its own restaurant with complete settings, so nothing in the suite could ever see a restaurant that was missing one. The defect lived entirely in data that only the real app path touches.
+2. **Silent refusal is the actual defect.** A restaurant whose settings are incomplete disables the single feature the product exists for — and said nothing. No error, no warning, just an em-dash on a dashboard and an empty kitchen screen. `TimingService` now logs a warning naming the restaurant and the missing keys. It still returns the same rejection, because a caller genuinely cannot proceed either way, but it no longer does it quietly. Turning that warning into an alert belongs to CP11.
+
+### The "known flaky" CP4 test was a real test defect
+
+`intake.e2e-spec.ts`'s stale-draft test failed once in a full run and passed alone, and had acquired the label "known flaky" — which is how a test stops being read. It set `DRAFT_TOKEN_TTL_MS_OVERRIDE = 3000`, then performed a `start()` and two `sendText()` round-trips against a real server and a real database before asserting. On a loaded machine that setup alone can exceed three seconds, expiring the token and 401-ing the final request — a failure that says nothing about the behaviour under test.
+
+What the test asserts is that the *business* inactivity window lapses while the *token* does not. Raising the token TTL to 30s preserves that relationship exactly and removes the race against the machine. Same root cause as the `hookTimeout` change above: a test whose outcome depends on machine speed is not a test result.
+
+### Verified, not asserted
+
+Re-run in a real browser after every fix above, booking a table through the guest flow and reading the result on the staff screens:
+
+| | |
+|---|---|
+| Guest booking → dashboard → kitchen display | works end to end; the kitchen display rendered a ticket for the first time in the project |
+| Kitchen start / food out | real values, and the arithmetic reconciles with the plan's worked example (18-min dish + 5-min prep buffer = 23 min before arrival; + 8-min expo = food out) |
+| Times on staff screens | the restaurant's zone, not the browser's |
+| Booking SMS | "arriving 7:45 AM" — the restaurant's zone, not UTC |
+| Hydration mismatch | gone from the console |
+| Focus after "Send code" / "Verify" / "Confirm booking" | moves to the code field, the confirm button, and the confirmation panel; each step announced via `role="status"` |
+| Heading structure on confirmation | one `<h1>`, one `<h2>` |
+| Transcript | `tabindex="0"`, `aria-label="Conversation"` |
+| Emoji in button names | `aria-hidden`; accessible names read "Speak", "Type", "Hold to talk" |
+| Table reassignment | a form with its own Move button; the `<select>` has no change handler |
+| "Food out" when not startable | `aria-disabled`, focusable, `aria-describedby` its own reason |
+| Landmarks | `main` / `header` / `nav` on every staff page |
+| axe-core WCAG 2.1 AA | 0 violations, 0 incomplete on customer intake, confirmation, login, dashboard and kitchen display |
+
+### Deferred, with reasons
+
+- **The dashboard WebSocket reported "Reconnecting" throughout this pass.** Not filed as a defect: a Node `ws` client connects to the same server, from the same machine, and completes the handshake. The failure was observed only inside an embedded browser pane, which points at its network sandbox rather than the application. **Must be confirmed in a real browser before CP11**, and until it is, CP7's realtime path has never actually been exercised by a browser. This is the largest open unknown in the project.
+- **A brief "Voice isn't available in this browser" on first paint.** `useSyncExternalStore`'s server snapshot is `false` by design (CP4 chose it deliberately to avoid a hydration mismatch), so the notice renders for one frame before hydration corrects it. Fixing it properly means not rendering the notice until hydration settles. Cosmetic, sub-frame, and the alternative reintroduces the mismatch CP4 chose this shape to avoid.
+- **React StrictMode issues `POST /api/intake/start` twice per page load in dev**, creating an orphan draft visit each time. Dev-only, and drafts already expire. Worth a look when draft cleanup is built.
+- **No CI-resident accessibility harness.** This pass injected axe-core into a live page, which proves the current state but does not prevent regression. A Playwright + `@axe-core/playwright` job belongs with the rest of the CI work in CP11; adding a browser download to CI now, on a machine that cannot currently run the existing suite in parallel, would trade a real check for a broken pipeline.

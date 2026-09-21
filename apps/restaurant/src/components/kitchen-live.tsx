@@ -1,19 +1,22 @@
 "use client";
 
-import { useCallback, useState, useTransition } from "react";
-import type { KitchenTicketDto } from "@raise/shared-types";
-import { useDashboardSocket, type SocketState } from "@/lib/use-dashboard-socket";
-import { acknowledgeAllergiesAction, markFoodOutAction } from "@/app/kitchen/actions";
+import { useCallback, useRef, useState, useTransition } from "react";
+import { formatClockTime, type KitchenTicketDto } from "@raise/shared-types";
+import {
+  useDashboardSocket,
+  type SocketState,
+} from "@/lib/use-dashboard-socket";
+import {
+  acknowledgeAllergiesAction,
+  markFoodOutAction,
+} from "@/app/kitchen/actions";
 import { AllergenChips } from "@/components/allergen-fields";
 
 interface Props {
   initialTickets: KitchenTicketDto[];
   canAct: boolean;
-}
-
-function clockTime(iso: string | null): string {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  /** The RESTAURANT's IANA zone, from the API — never the browser's. See CP10 in docs/decisions.md. */
+  timezone: string;
 }
 
 function ConnectionBanner({ state }: { state: SocketState }) {
@@ -25,7 +28,11 @@ function ConnectionBanner({ state }: { state: SocketState }) {
         ? "Reconnecting — this queue may be out of date."
         : state.reason;
   return (
-    <p role="status" aria-live="polite" className="rounded-md border border-border-default px-4 py-3 text-base text-text-muted">
+    <p
+      role="status"
+      aria-live="polite"
+      className="rounded-md border border-border-default px-4 py-3 text-base text-text-muted"
+    >
       {text}
     </p>
   );
@@ -49,21 +56,60 @@ function ConnectionBanner({ state }: { state: SocketState }) {
  *  - they do not share the accent used for priority/next, which the
  *    concept deck reused for both (see docs/concept-critique.md).
  */
-export function KitchenLive({ initialTickets, canAct }: Props) {
+export function KitchenLive({ initialTickets, canAct, timezone }: Props) {
   const [tickets, setTickets] = useState(initialTickets);
   const [notice, setNotice] = useState<string | null>(null);
+  const [announcement, setAnnouncement] = useState("");
+  const knownTicketIds = useRef(
+    new Set(initialTickets.map((ticket) => ticket.visitId)),
+  );
   const [, startTransition] = useTransition();
+
+  const clockTime = useCallback(
+    (iso: string | null) => formatClockTime(iso, timezone),
+    [timezone],
+  );
+
+  /**
+   * CP10. A ticket arriving on the pass was a purely visual event; this
+   * says it. Allergy flags are named in the announcement on purpose --
+   * it is the one thing on this screen that can hurt someone, and a
+   * cook who can't see the screen needs it in the first sentence, not
+   * after they've walked over.
+   */
+  const announceNewTickets = useCallback(
+    (next: KitchenTicketDto[]) => {
+      const arrivals = next.filter(
+        (ticket) => !knownTicketIds.current.has(ticket.visitId),
+      );
+      knownTicketIds.current = new Set(next.map((ticket) => ticket.visitId));
+      if (arrivals.length === 0) return;
+      setAnnouncement(
+        arrivals
+          .map(
+            (ticket) =>
+              `New ticket, table ${ticket.tableLabel}, start ${clockTime(ticket.kitchenStartTarget)}.` +
+              (ticket.allergyFlags.length > 0
+                ? ` Allergy: ${ticket.allergyFlags.join(", ")}.`
+                : ""),
+          )
+          .join(" "),
+      );
+    },
+    [clockTime],
+  );
 
   const resync = useCallback(async () => {
     try {
       const res = await fetch("/api/kitchen/queue");
       if (!res.ok) return;
       const body = (await res.json()) as { tickets: KitchenTicketDto[] };
+      announceNewTickets(body.tickets);
       setTickets(body.tickets);
     } catch {
       // The banner already reports that we aren't live.
     }
-  }, []);
+  }, [announceNewTickets]);
 
   // Every kitchen event changes queue membership or ticket state, and none
   // of them carry enough to rebuild a ticket locally. Refetch rather than
@@ -83,8 +129,14 @@ export function KitchenLive({ initialTickets, canAct }: Props) {
   return (
     <div className="flex flex-col gap-4">
       <ConnectionBanner state={socket} />
+      <p aria-live="polite" role="status" className="sr-only">
+        {announcement}
+      </p>
       {notice ? (
-        <p role="alert" className="rounded-md border-2 border-danger px-4 py-3 text-base font-medium text-danger">
+        <p
+          role="alert"
+          className="rounded-md border-2 border-danger px-4 py-3 text-base font-medium text-danger"
+        >
           {notice}
         </p>
       ) : null}
@@ -96,34 +148,48 @@ export function KitchenLive({ initialTickets, canAct }: Props) {
       ) : (
         <ul className="flex flex-col gap-3">
           {tickets.map((ticket) => (
-            <li key={ticket.visitId} className="rounded-lg border-2 border-border-default p-5">
+            <li
+              key={ticket.visitId}
+              className="rounded-lg border-2 border-border-default p-5"
+            >
               <div className="flex flex-wrap items-baseline justify-between gap-3">
                 <div className="flex items-baseline gap-4">
                   <span className="text-3xl font-bold tabular-nums text-foreground">
                     {clockTime(ticket.kitchenStartTarget)}
                   </span>
-                  <span className="text-xl font-semibold text-foreground">Table {ticket.tableLabel}</span>
+                  <span className="text-xl font-semibold text-foreground">
+                    Table {ticket.tableLabel}
+                  </span>
                   <span className="text-base text-text-muted">
-                    {ticket.partySize} {ticket.partySize === 1 ? "guest" : "guests"}
+                    {ticket.partySize}{" "}
+                    {ticket.partySize === 1 ? "guest" : "guests"}
                   </span>
                 </div>
                 <span className="text-base text-text-muted">
-                  Food out <span className="font-medium tabular-nums text-foreground">{clockTime(ticket.foodOutTarget)}</span>
+                  Food out{" "}
+                  <span className="font-medium tabular-nums text-foreground">
+                    {clockTime(ticket.foodOutTarget)}
+                  </span>
                 </span>
               </div>
 
               {ticket.allergyFlags.length > 0 ? (
                 <div className="mt-4 flex flex-wrap items-center gap-3 rounded-md border-2 border-foreground bg-surface-muted px-4 py-3">
-                  <span className="text-base font-bold uppercase tracking-wide text-foreground">Allergy</span>
+                  <span className="text-base font-bold uppercase tracking-wide text-foreground">
+                    Allergy
+                  </span>
                   <AllergenChips allergens={ticket.allergyFlags} />
                   {ticket.allergyAcknowledgedAt ? (
                     <span className="text-sm text-text-muted">
-                      Seen by kitchen at {clockTime(ticket.allergyAcknowledgedAt)}
+                      Seen by kitchen at{" "}
+                      {clockTime(ticket.allergyAcknowledgedAt)}
                     </span>
                   ) : canAct ? (
                     <button
                       type="button"
-                      onClick={() => run(() => acknowledgeAllergiesAction(ticket.visitId))}
+                      onClick={() =>
+                        run(() => acknowledgeAllergiesAction(ticket.visitId))
+                      }
                       className="rounded-md border-2 border-foreground px-4 py-2 text-base font-semibold text-foreground transition hover:bg-background"
                     >
                       I&apos;ve seen this
@@ -135,9 +201,15 @@ export function KitchenLive({ initialTickets, canAct }: Props) {
               <ul className="mt-4 flex flex-col gap-1">
                 {ticket.items.map((item) => (
                   <li key={item.id} className="text-lg text-foreground">
-                    <span className="font-semibold tabular-nums">{item.quantity}×</span> {item.name}
+                    <span className="font-semibold tabular-nums">
+                      {item.quantity}×
+                    </span>{" "}
+                    {item.name}
                     {item.modifications.length > 0 ? (
-                      <span className="text-text-muted"> — {item.modifications.join(", ")}</span>
+                      <span className="text-text-muted">
+                        {" "}
+                        — {item.modifications.join(", ")}
+                      </span>
                     ) : null}
                   </li>
                 ))}
@@ -145,16 +217,34 @@ export function KitchenLive({ initialTickets, canAct }: Props) {
 
               {canAct ? (
                 <div className="mt-4">
+                  {/* CP10: this was a real `disabled` button, which is not
+                      focusable -- so a keyboard or screen-reader user could
+                      never reach it and never heard the "accept the prep
+                      prompt first" text sitting next to it. aria-disabled
+                      keeps it in the tab order and tied to its own reason. */}
                   <button
                     type="button"
-                    onClick={() => run(() => markFoodOutAction(ticket.visitId))}
-                    disabled={ticket.status !== "kitchen_started"}
-                    className="rounded-md bg-zinc-900 px-5 py-2.5 text-base font-semibold text-white transition hover:bg-zinc-800 disabled:opacity-40"
+                    onClick={() => {
+                      if (ticket.status !== "kitchen_started") return;
+                      run(() => markFoodOutAction(ticket.visitId));
+                    }}
+                    aria-disabled={ticket.status !== "kitchen_started"}
+                    aria-describedby={
+                      ticket.status !== "kitchen_started"
+                        ? `food-out-why-${ticket.visitId}`
+                        : undefined
+                    }
+                    className="rounded-md bg-zinc-900 px-5 py-2.5 text-base font-semibold text-white transition hover:bg-zinc-800 aria-disabled:cursor-not-allowed aria-disabled:opacity-40 aria-disabled:hover:bg-zinc-900"
                   >
                     Food out
                   </button>
                   {ticket.status !== "kitchen_started" ? (
-                    <span className="ml-3 text-sm text-text-muted">Accept the prep prompt first.</span>
+                    <span
+                      id={`food-out-why-${ticket.visitId}`}
+                      className="ml-3 text-sm text-text-muted"
+                    >
+                      Accept the prep prompt first.
+                    </span>
                   ) : null}
                 </div>
               ) : null}

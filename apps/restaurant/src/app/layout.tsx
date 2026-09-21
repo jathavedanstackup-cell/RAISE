@@ -12,9 +12,16 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+/**
+ * CP10: the description still said "scaffold placeholder (CP0)" and every
+ * route shared one title, so "Tonight — Inbound", the pass and the menu
+ * admin were indistinguishable in a tab strip, in history and to a screen
+ * reader's page-title announcement (WCAG 2.4.2). `template` lets each page
+ * name itself; `default` covers routes that don't.
+ */
 export const metadata: Metadata = {
-  title: "RAISE — Restaurant",
-  description: "RAISE restaurant dashboard/KDS app — scaffold placeholder (CP0)",
+  title: { template: "%s — RAISE", default: "RAISE for restaurants" },
+  description: "Tonight's bookings, the pass, and your menu.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

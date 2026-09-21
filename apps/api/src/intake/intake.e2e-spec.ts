@@ -390,16 +390,36 @@ describe('CP4 voice/chat intake pipeline', () => {
    * exercises JWT expiry, not just the business-staleness check.
    */
   it('CP4 follow-up: a business-stale draft is still reachable within the token\'s (longer) grace period — reaches recap, not a 404', async () => {
-    process.env.DRAFT_INACTIVITY_WINDOW_MS_OVERRIDE = '50';
-    process.env.DRAFT_TOKEN_TTL_MS_OVERRIDE = '3000';
+    // CP10: this was 50ms, which is shorter than a single HTTP round trip
+    // against a real server and database. The draft therefore went stale
+    // between `start()` and the FIRST `sendText`, so that turn took the
+    // re-engagement path instead of the add-an-item path, the Garlic Naan
+    // was never ordered, and the recap this test asserts on correctly
+    // reported an empty order. The window has to be comfortably longer
+    // than the test's own setup and comfortably shorter than the sleep;
+    // 400ms against an 800ms sleep is both.
+    process.env.DRAFT_INACTIVITY_WINDOW_MS_OVERRIDE = '400';
+    // CP10: this was 3000ms, and it was the source of this suite's
+    // "known flaky" test. The token has to outlive the whole test, and the
+    // test does a `start()` and two `sendText()` round-trips against a real
+    // HTTP server and a real database first. On a loaded machine those
+    // alone can exceed three seconds, at which point the token expires and
+    // the final request 401s -- a failure that says nothing about the
+    // behaviour under test. What the test actually asserts is that the
+    // business window lapses while the token does NOT, and 30s preserves
+    // that relationship exactly while removing the race against the
+    // machine. A test that is re-run on failure by convention is a test
+    // nobody reads, and the next real failure here would have been re-run
+    // too.
+    process.env.DRAFT_TOKEN_TTL_MS_OVERRIDE = '30000';
     try {
       const guest = createSession(restaurantId);
       await guest.start();
       await guest.sendText("I'll have the Garlic Naan");
 
-      // Let the (overridden, 50ms) business window genuinely lapse in
-      // real time. The (overridden, 3000ms) token is nowhere near expiry.
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      // Let the (overridden, 400ms) business window genuinely lapse in
+      // real time. The (overridden, 30s) token is nowhere near expiry.
+      await new Promise((resolve) => setTimeout(resolve, 800));
 
       const res = await guest.sendText('sorry, still there');
       expect(res.status).toBe(201);

@@ -13,13 +13,28 @@ export default async function MenuPage() {
   const canManage = session.role === "owner";
 
   return (
-    <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 px-6 py-10">
-      <div className="flex items-center justify-between">
+    <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 px-6 py-10">
+      <header className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold tracking-tight text-foreground">Menu</h1>
           <p className="mt-1 text-sm text-text-muted">{session.restaurantName}</p>
         </div>
-        <div className="flex items-center gap-2">
+        {/* CP10: signing in lands on this page, and it linked to neither the
+            dashboard nor the kitchen -- a host could only reach their own
+            service screens by typing the URL. Found by signing in. */}
+        <nav aria-label="Staff sections" className="flex items-center gap-2">
+          <Link
+            href="/dashboard"
+            className="rounded-md border border-border-default px-4 py-2 text-sm font-medium text-foreground transition hover:bg-surface-muted"
+          >
+            Tonight
+          </Link>
+          <Link
+            href="/kitchen"
+            className="rounded-md border border-border-default px-4 py-2 text-sm font-medium text-foreground transition hover:bg-surface-muted"
+          >
+            Kitchen
+          </Link>
           {canManage ? (
             <Link
               href="/menu/new"
@@ -36,8 +51,8 @@ export default async function MenuPage() {
               Sign out
             </button>
           </form>
-        </div>
-      </div>
+        </nav>
+      </header>
 
       {items.length === 0 ? (
         <p className="rounded-md border border-dashed border-border-default px-4 py-8 text-center text-sm text-text-muted">
@@ -86,6 +101,6 @@ export default async function MenuPage() {
           ))}
         </ul>
       )}
-    </div>
+    </main>
   );
 }

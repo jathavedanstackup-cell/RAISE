@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { TenantPrismaService, type ScopedPrisma } from '../prisma/tenant-prisma.service.js';
 import { CLOCK, type Clock } from './clock.js';
@@ -41,6 +41,8 @@ function isValidBufferMinutes(value: unknown): value is number {
  */
 @Injectable()
 export class TimingService {
+  private readonly logger = new Logger(TimingService.name);
+
   constructor(
     private readonly tenantPrisma: TenantPrismaService,
     @Inject(CLOCK) private readonly clock: Clock,
@@ -55,9 +57,13 @@ export class TimingService {
    * for why that trigger is deliberately left for whichever checkpoint
    * first needs it) and after an order-item change.
    */
-  async recompute(restaurantId: string, visitId: string): Promise<RecomputeResult> {
+  async recompute(
+    restaurantId: string,
+    visitId: string,
+    reason: 'initial' | 'items_changed' = 'items_changed',
+  ): Promise<RecomputeResult> {
     return this.tenantPrisma.forRestaurant(restaurantId, (tx) =>
-      this.recomputeTargets(tx, restaurantId, visitId, 'items_changed'),
+      this.recomputeTargets(tx, restaurantId, visitId, reason),
     );
   }
 
@@ -98,7 +104,7 @@ export class TimingService {
     tx: ScopedPrisma,
     restaurantId: string,
     visitId: string,
-    reason: 'eta_changed' | 'items_changed',
+    reason: 'initial' | 'eta_changed' | 'items_changed',
   ): Promise<RecomputeResult> {
     const visit = await tx.visit.findFirst({
       where: { id: visitId, restaurantId },
@@ -112,7 +118,29 @@ export class TimingService {
     if (!visit.arrivalEta || visit.visitItems.length === 0) return { applied: false, rejection: 'visit_not_ready' };
 
     const settings = visit.restaurant.settings as { avgPrepBufferMinutes?: unknown; expoBufferMinutes?: unknown };
-    if (!isValidBufferMinutes(settings.avgPrepBufferMinutes) || !isValidBufferMinutes(settings.expoBufferMinutes)) {
+    const missingSettings = (['avgPrepBufferMinutes', 'expoBufferMinutes'] as const).filter(
+      (key) => !isValidBufferMinutes(settings[key]),
+    );
+    if (
+      missingSettings.length > 0 ||
+      // Repeated rather than inferred from `missingSettings`: the filter
+      // above builds a message, this narrows the types. TypeScript cannot
+      // see that an empty filter result implies both values are numbers.
+      !isValidBufferMinutes(settings.avgPrepBufferMinutes) ||
+      !isValidBufferMinutes(settings.expoBufferMinutes)
+    ) {
+      // CP10 found this the hard way. A restaurant whose settings are
+      // missing a buffer produces no timing at all, for any visit, ever --
+      // the dashboard shows "—" and the kitchen display stays empty, with
+      // nothing anywhere saying why. That is a configuration error, not a
+      // visit that isn't ready yet, and conflating the two under one silent
+      // rejection is what let it survive. It still returns the same
+      // rejection (callers genuinely cannot proceed either way), but it no
+      // longer does so quietly. CP11 is where this should become an alert.
+      this.logger.warn(
+        `Restaurant ${restaurantId} is missing required timing settings: ${missingSettings.join(', ')}. ` +
+          'No kitchen-start or food-out target can be computed for any visit until this is set.',
+      );
       return { applied: false, rejection: 'visit_not_ready' };
     }
 

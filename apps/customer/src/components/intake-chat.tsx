@@ -1,7 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { ConfirmedVisitDto, ConversationTurnDto, IntakeTurnResponse, VisitDraftDto } from "@raise/shared-types";
+import type {
+  ConfirmedVisitDto,
+  ConversationTurnDto,
+  IntakeTurnResponse,
+  VisitDraftDto,
+} from "@raise/shared-types";
 import { ConfirmPanel } from "./confirm-panel";
 
 // Browser feature detection that's intentionally allowed to differ between
@@ -13,7 +18,11 @@ function subscribeNever() {
   return () => {};
 }
 function getVoiceSupportSnapshot() {
-  return typeof window !== "undefined" && "MediaRecorder" in window && !!navigator.mediaDevices?.getUserMedia;
+  return (
+    typeof window !== "undefined" &&
+    "MediaRecorder" in window &&
+    !!navigator.mediaDevices?.getUserMedia
+  );
 }
 function getVoiceSupportServerSnapshot() {
   return false;
@@ -48,12 +57,24 @@ export function IntakeChat({ restaurantId }: { restaurantId: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
-  const [confirmedVisit, setConfirmedVisit] = useState<ConfirmedVisitDto | null>(null);
-  const voiceSupported = useSyncExternalStore(subscribeNever, getVoiceSupportSnapshot, getVoiceSupportServerSnapshot);
+  const [confirmedVisit, setConfirmedVisit] =
+    useState<ConfirmedVisitDto | null>(null);
+  const voiceSupported = useSyncExternalStore(
+    subscribeNever,
+    getVoiceSupportSnapshot,
+    getVoiceSupportServerSnapshot,
+  );
 
+  const confirmedRef = useRef<HTMLDivElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const startedRef = useRef(false);
+
+  // Moves focus to the confirmation the moment it renders. Without this a
+  // keyboard user is left on a button that no longer exists.
+  useEffect(() => {
+    if (confirmedVisit) confirmedRef.current?.focus();
+  }, [confirmedVisit]);
 
   useEffect(() => {
     if (startedRef.current) return;
@@ -66,37 +87,56 @@ export function IntakeChat({ restaurantId }: { restaurantId: string }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ restaurantId }),
         });
-        const body = (await res.json()) as IntakeTurnResponse & { message?: string };
-        if (!res.ok) throw new Error(body.message ?? "Couldn't start your visit.");
+        const body = (await res.json()) as IntakeTurnResponse & {
+          message?: string;
+        };
+        if (!res.ok)
+          throw new Error(body.message ?? "Couldn't start your visit.");
         setVisitId(body.visit.id);
         setDraftToken(body.draftToken);
         setDraft(body.visit);
         setTurns(body.turns);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Couldn't start your visit.");
+        setError(
+          err instanceof Error ? err.message : "Couldn't start your visit.",
+        );
       } finally {
         setBusy(false);
       }
     })();
   }, [restaurantId]);
 
-  async function submitTurn(payload: { mode: "text"; text: string } | { mode: "voice"; audioBase64: string; mimeType: string }) {
+  async function submitTurn(
+    payload:
+      | { mode: "text"; text: string }
+      | { mode: "voice"; audioBase64: string; mimeType: string },
+  ) {
     if (!visitId || !draftToken) return;
     setBusy(true);
     setError(null);
     try {
       const res = await fetch(`/api/intake/${visitId}/turn`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${draftToken}` },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${draftToken}`,
+        },
         body: JSON.stringify({ restaurantId, ...payload }),
       });
-      const body = (await res.json()) as IntakeTurnResponse & { message?: string };
-      if (!res.ok) throw new Error(body.message ?? "Something went wrong sending that.");
+      const body = (await res.json()) as IntakeTurnResponse & {
+        message?: string;
+      };
+      if (!res.ok)
+        throw new Error(body.message ?? "Something went wrong sending that.");
       setDraftToken(body.draftToken); // reissued fresh on every response — see docs/decisions.md
       setDraft(body.visit);
       setTurns((prev) => [...prev, ...body.turns]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong sending that.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong sending that.",
+      );
     } finally {
       setBusy(false);
     }
@@ -122,7 +162,11 @@ export function IntakeChat({ restaurantId }: { restaurantId: string }) {
         stream.getTracks().forEach((track) => track.stop());
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType });
         const audioBase64 = await blobToBase64(blob);
-        void submitTurn({ mode: "voice", audioBase64, mimeType: recorder.mimeType || "audio/webm" });
+        void submitTurn({
+          mode: "voice",
+          audioBase64,
+          mimeType: recorder.mimeType || "audio/webm",
+        });
       };
       mediaRecorderRef.current = recorder;
       recorder.start();
@@ -143,13 +187,30 @@ export function IntakeChat({ restaurantId }: { restaurantId: string }) {
     // boundary). See docs/concept-critique.md's finding that a confirmation
     // buried at the same visual weight as ordinary conversation undersells it.
     return (
-      <div className="flex w-full max-w-xl flex-col gap-4 rounded-lg border-4 border-black bg-zinc-50 p-6 text-center dark:border-white dark:bg-zinc-900">
-        <h1 className="text-2xl font-bold">You&apos;re booked!</h1>
+      /* CP10: this replaced the entire view, dropping focus to <body> and
+         announcing nothing -- the single most consequential moment in the
+         product happened, for a screen-reader user, in silence. It is now a
+         focusable region that takes focus and announces itself. It is also
+         an <h2>: the page already owns the <h1> ("Plan your visit"), and
+         two <h1>s on one page is not a heading structure. */
+      <div
+        ref={confirmedRef}
+        tabIndex={-1}
+        role="status"
+        aria-live="polite"
+        className="flex w-full max-w-xl flex-col gap-4 rounded-lg border-4 border-black bg-zinc-50 p-6 text-center outline-none dark:border-white dark:bg-zinc-900"
+      >
+        <h2 className="text-2xl font-bold">You&apos;re booked!</h2>
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-left text-sm">
           <dt className="font-medium">Party size</dt>
           <dd>{confirmedVisit.partySize}</dd>
           <dt className="font-medium">Arrival</dt>
-          <dd>{new Date(confirmedVisit.arrivalEta).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</dd>
+          <dd>
+            {new Date(confirmedVisit.arrivalEta).toLocaleTimeString([], {
+              hour: "numeric",
+              minute: "2-digit",
+            })}
+          </dd>
           <dt className="font-medium">Table</dt>
           <dd>{confirmedVisit.table.label}</dd>
         </dl>
@@ -168,7 +229,11 @@ export function IntakeChat({ restaurantId }: { restaurantId: string }) {
 
   return (
     <div className="flex w-full max-w-xl flex-col gap-4">
-      <div role="group" aria-label="Choose how to talk to us" className="flex gap-2">
+      <div
+        role="group"
+        aria-label="Choose how to talk to us"
+        className="flex gap-2"
+      >
         <button
           type="button"
           aria-pressed={mode === "voice"}
@@ -177,7 +242,7 @@ export function IntakeChat({ restaurantId }: { restaurantId: string }) {
           className="min-h-11 flex-1 rounded-lg border-2 px-4 py-2 text-base font-medium transition-colors data-[active=true]:border-black data-[active=true]:bg-black data-[active=true]:text-white dark:data-[active=true]:border-white dark:data-[active=true]:bg-white dark:data-[active=true]:text-black border-zinc-400 text-zinc-900 dark:border-zinc-500 dark:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
           data-active={mode === "voice"}
         >
-          🎤 Speak
+          <span aria-hidden="true">🎤</span> Speak
         </button>
         <button
           type="button"
@@ -186,17 +251,35 @@ export function IntakeChat({ restaurantId }: { restaurantId: string }) {
           className="min-h-11 flex-1 rounded-lg border-2 px-4 py-2 text-base font-medium transition-colors data-[active=true]:border-black data-[active=true]:bg-black data-[active=true]:text-white dark:data-[active=true]:border-white dark:data-[active=true]:bg-white dark:data-[active=true]:text-black border-zinc-400 text-zinc-900 dark:border-zinc-500 dark:text-zinc-100"
           data-active={mode === "text"}
         >
-          ⌨️ Type
+          <span aria-hidden="true">⌨️</span> Type
         </button>
       </div>
-      {!voiceSupported && <p className="text-sm text-zinc-500">Voice isn&apos;t available in this browser — typing works just as well.</p>}
+      {!voiceSupported && (
+        <p className="text-sm text-zinc-500">
+          Voice isn&apos;t available in this browser — typing works just as
+          well.
+        </p>
+      )}
 
-      <div aria-live="polite" className="flex max-h-96 flex-col gap-2 overflow-y-auto rounded-lg border border-zinc-300 p-3 dark:border-zinc-700" role="log">
+      {/* tabIndex + a name: once the conversation is long enough to scroll,
+          a keyboard user has no way to scroll it otherwise. axe-core flags
+          this as `scrollable-region-focusable` (serious) -- but only once
+          there are enough turns to overflow, which is why it took a real
+          conversation, not a first paint, to find it. */}
+      <div
+        aria-live="polite"
+        role="log"
+        tabIndex={0}
+        aria-label="Conversation"
+        className="flex max-h-96 flex-col gap-2 overflow-y-auto rounded-lg border border-zinc-300 p-3 dark:border-zinc-700"
+      >
         {turns.map((turn) => (
           <div
             key={turn.id}
             className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
-              turn.role === "customer" ? "self-end bg-zinc-200 text-zinc-900 dark:bg-zinc-700 dark:text-zinc-50" : "self-start bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
+              turn.role === "customer"
+                ? "self-end bg-zinc-200 text-zinc-900 dark:bg-zinc-700 dark:text-zinc-50"
+                : "self-start bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
             }`}
           >
             {turn.transcript}
@@ -218,11 +301,16 @@ export function IntakeChat({ restaurantId }: { restaurantId: string }) {
           aria-pressed={recording}
           className="min-h-11 w-full rounded-lg bg-black px-4 py-3 text-base font-medium text-white disabled:opacity-50 dark:bg-white dark:text-black"
         >
-          {recording ? "⏹ Stop and send" : "🎤 Hold to talk (tap to start)"}
+          <span aria-hidden="true">{recording ? "⏹" : "🎤"}</span>{" "}
+          {recording ? "Stop and send" : "Hold to talk (tap to start)"}
         </button>
       </div>
 
-      <form hidden={mode !== "text"} onSubmit={handleTextSubmit} className="flex gap-2">
+      <form
+        hidden={mode !== "text"}
+        onSubmit={handleTextSubmit}
+        className="flex gap-2"
+      >
         <label htmlFor="intake-text-input" className="sr-only">
           Type your message
         </label>
@@ -235,7 +323,11 @@ export function IntakeChat({ restaurantId }: { restaurantId: string }) {
           placeholder="Type here…"
           className="min-h-11 flex-1 rounded-lg border border-zinc-400 px-3 py-2 text-base dark:border-zinc-600 dark:bg-zinc-900"
         />
-        <button type="submit" disabled={busy || !textValue.trim()} className="min-h-11 rounded-lg bg-black px-4 py-2 text-base font-medium text-white disabled:opacity-50 dark:bg-white dark:text-black">
+        <button
+          type="submit"
+          disabled={busy || !textValue.trim()}
+          className="min-h-11 rounded-lg bg-black px-4 py-2 text-base font-medium text-white disabled:opacity-50 dark:bg-white dark:text-black"
+        >
           Send
         </button>
       </form>
@@ -243,14 +335,28 @@ export function IntakeChat({ restaurantId }: { restaurantId: string }) {
       {draft && (
         <div className="rounded-lg border border-zinc-300 p-3 text-sm dark:border-zinc-700">
           <h2 className="mb-2 font-semibold">Your visit so far</h2>
-          <p>{draft.partySize ? `Party of ${draft.partySize}` : "Party size not set yet"}</p>
-          {draft.arrivalEta && <p>Arriving around {new Date(draft.arrivalEta).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</p>}
+          <p>
+            {draft.partySize
+              ? `Party of ${draft.partySize}`
+              : "Party size not set yet"}
+          </p>
+          {draft.arrivalEta && (
+            <p>
+              Arriving around{" "}
+              {new Date(draft.arrivalEta).toLocaleTimeString([], {
+                hour: "numeric",
+                minute: "2-digit",
+              })}
+            </p>
+          )}
           {draft.tableProposal && <p>Table: {draft.tableProposal.label}</p>}
           <ul className="mt-2 list-disc pl-5">
             {draft.items.map((item) => (
               <li key={item.id}>
                 {item.quantity}x {item.name}
-                {item.allergyFlags.length > 0 && <span> — {item.allergyFlags.join(", ")}</span>}
+                {item.allergyFlags.length > 0 && (
+                  <span> — {item.allergyFlags.join(", ")}</span>
+                )}
               </li>
             ))}
           </ul>
@@ -258,7 +364,13 @@ export function IntakeChat({ restaurantId }: { restaurantId: string }) {
       )}
 
       {draft && visitId && draftToken && (
-        <ConfirmPanel restaurantId={restaurantId} visitId={visitId} draftToken={draftToken} draft={draft} onConfirmed={setConfirmedVisit} />
+        <ConfirmPanel
+          restaurantId={restaurantId}
+          visitId={visitId}
+          draftToken={draftToken}
+          draft={draft}
+          onConfirmed={setConfirmedVisit}
+        />
       )}
     </div>
   );
