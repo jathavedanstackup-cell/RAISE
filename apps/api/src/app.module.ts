@@ -8,6 +8,8 @@ import { MenuItemsModule } from './menu-items/menu-items.module.js';
 import { IntakeModule } from './intake/intake.module.js';
 import { VisitsModule } from './visits/visits.module.js';
 import { TimingModule } from './timing/timing.module.js';
+import { RealtimeModule } from './realtime/realtime.module.js';
+import { DashboardModule } from './dashboard/dashboard.module.js';
 
 @Module({
   imports: [
@@ -22,6 +24,8 @@ import { TimingModule } from './timing/timing.module.js';
     IntakeModule,
     VisitsModule,
     TimingModule,
+    RealtimeModule,
+    DashboardModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
+import { WsAdapter } from '@nestjs/platform-ws';
 import request from 'supertest';
 import { AppModule } from '../app.module.js';
 import { PrismaClient } from '../generated/prisma/client.js';
@@ -28,6 +29,10 @@ describe('CP5 confirmation & booking flow', () => {
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleRef.createNestApplication();
+    // CP7 added a @WebSocketGateway() to AppModule (realtime/visits.gateway.ts); Nest's default
+    // driver detection needs socket.io, which this repo doesn't install (uses native ws instead).
+    // Every e2e spec that bootstraps AppModule needs this or app.init() throws.
+    app.useWebSocketAdapter(new WsAdapter(app));
     await app.init();
 
     rawPrisma = createTestPrismaClient();

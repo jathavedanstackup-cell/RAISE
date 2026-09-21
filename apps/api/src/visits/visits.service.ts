@@ -1,7 +1,9 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import type { ConfirmVisitResponse, ConfirmRejectionBody, AllergenTag } from '@raise/shared-types';
 import { TenantPrismaService } from '../prisma/tenant-prisma.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
+import { VISIT_CONFIRMED, VisitConfirmedEvent } from '../realtime/realtime.events.js';
 
 const VISIT_INCLUDE = { visitItems: { include: { menuItem: true } }, table: true } as const;
 type VisitWithItemsAndTable = Prisma.VisitGetPayload<{ include: typeof VISIT_INCLUDE }>;
@@ -22,7 +24,12 @@ class VisitClaimLostError extends Error {}
  */
 @Injectable()
 export class VisitsService {
-  constructor(private readonly tenantPrisma: TenantPrismaService) {}
+  private readonly logger = new Logger(VisitsService.name);
+
+  constructor(
+    private readonly tenantPrisma: TenantPrismaService,
+    private readonly events: EventEmitter2,
+  ) {}
 
   /**
    * Idempotent: calling this twice for the same visit (double-tap, retry,
@@ -128,6 +135,15 @@ export class VisitsService {
 
         return tx.visit.findUniqueOrThrow({ where: { id: visitId }, include: VISIT_INCLUDE });
       });
+
+      // CP7: additive only -- never lets a downstream listener's failure affect this trust-boundary response.
+      // See docs/decisions.md's CP6 entry for why nothing here automatically triggers CP6's timing
+      // computation; this is the analogous, deliberately narrow exception for the dashboard's own live feed.
+      try {
+        this.events.emit(VISIT_CONFIRMED, new VisitConfirmedEvent(restaurantId, visitId));
+      } catch (err) {
+        this.logger.error('Failed to emit VISIT_CONFIRMED -- confirm itself still succeeded', err as Error);
+      }
 
       return { visit: toConfirmedDto(confirmed), alreadyConfirmed: false };
     } catch (err) {
