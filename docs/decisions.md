@@ -587,6 +587,45 @@ Eight e2e suites failed with "Hook timed out in 10000ms" during this checkpoint;
 
 The repo had none. During this checkpoint the entire working tree was rewritten to CRLF by something outside the repo: 219 modified files, real changes in 24. A diff nobody can review is a review nobody performs. `* text=auto eol=lf` normalises on every platform; checked-in binaries are listed explicitly.
 
+### Finding 4 — the fix in Finding 1 was necessary and not sufficient
+
+Wiring `TimingSubscriber` into `VISIT_CONFIRMED` was correct, and the product still did not work. Re-running the whole flow in a browser after the fix produced the same "Kitchen start —, Food out —" — but this time with a reason in the log: `visit_not_ready`.
+
+The demo restaurant's `settings` held `avgPrepBufferMinutes` and `tableHoldWindowMinutes` and no `expoBufferMinutes`. `recomputeTargets` requires both buffers, so it refused to compute anything, for every visit, forever.
+
+The cause was the seed: `prisma.restaurant.upsert({ where, update: {}, create: {...} })`. `expoBufferMinutes` was added to the seeded settings in CP6, long after the demo restaurant row existed — and `update: {}` means an existing row is never corrected. Re-running the seed did nothing, because the row was already there. Idempotent should mean "converge to the seeded state", not "never touch what already exists"; the seed now updates as well as creates.
+
+Two lessons worth keeping, because both are about how this was missed:
+
+1. **A fix verified only by the tests that motivated it is not verified.** Every backend test constructs its own restaurant with complete settings, so nothing in the suite could ever see a restaurant that was missing one. The defect lived entirely in data that only the real app path touches.
+2. **Silent refusal is the actual defect.** A restaurant whose settings are incomplete disables the single feature the product exists for — and said nothing. No error, no warning, just an em-dash on a dashboard and an empty kitchen screen. `TimingService` now logs a warning naming the restaurant and the missing keys. It still returns the same rejection, because a caller genuinely cannot proceed either way, but it no longer does it quietly. Turning that warning into an alert belongs to CP11.
+
+### The "known flaky" CP4 test was a real test defect
+
+`intake.e2e-spec.ts`'s stale-draft test failed once in a full run and passed alone, and had acquired the label "known flaky" — which is how a test stops being read. It set `DRAFT_TOKEN_TTL_MS_OVERRIDE = 3000`, then performed a `start()` and two `sendText()` round-trips against a real server and a real database before asserting. On a loaded machine that setup alone can exceed three seconds, expiring the token and 401-ing the final request — a failure that says nothing about the behaviour under test.
+
+What the test asserts is that the *business* inactivity window lapses while the *token* does not. Raising the token TTL to 30s preserves that relationship exactly and removes the race against the machine. Same root cause as the `hookTimeout` change above: a test whose outcome depends on machine speed is not a test result.
+
+### Verified, not asserted
+
+Re-run in a real browser after every fix above, booking a table through the guest flow and reading the result on the staff screens:
+
+| | |
+|---|---|
+| Guest booking → dashboard → kitchen display | works end to end; the kitchen display rendered a ticket for the first time in the project |
+| Kitchen start / food out | real values, and the arithmetic reconciles with the plan's worked example (18-min dish + 5-min prep buffer = 23 min before arrival; + 8-min expo = food out) |
+| Times on staff screens | the restaurant's zone, not the browser's |
+| Booking SMS | "arriving 7:45 AM" — the restaurant's zone, not UTC |
+| Hydration mismatch | gone from the console |
+| Focus after "Send code" / "Verify" / "Confirm booking" | moves to the code field, the confirm button, and the confirmation panel; each step announced via `role="status"` |
+| Heading structure on confirmation | one `<h1>`, one `<h2>` |
+| Transcript | `tabindex="0"`, `aria-label="Conversation"` |
+| Emoji in button names | `aria-hidden`; accessible names read "Speak", "Type", "Hold to talk" |
+| Table reassignment | a form with its own Move button; the `<select>` has no change handler |
+| "Food out" when not startable | `aria-disabled`, focusable, `aria-describedby` its own reason |
+| Landmarks | `main` / `header` / `nav` on every staff page |
+| axe-core WCAG 2.1 AA | 0 violations, 0 incomplete on customer intake, confirmation, login, dashboard and kitchen display |
+
 ### Deferred, with reasons
 
 - **The dashboard WebSocket reported "Reconnecting" throughout this pass.** Not filed as a defect: a Node `ws` client connects to the same server, from the same machine, and completes the handshake. The failure was observed only inside an embedded browser pane, which points at its network sandbox rather than the application. **Must be confirmed in a real browser before CP11**, and until it is, CP7's realtime path has never actually been exercised by a browser. This is the largest open unknown in the project.

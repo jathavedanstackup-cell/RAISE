@@ -26,24 +26,33 @@ const RESTAURANT_ID = 'demo-spice-route';
 async function main() {
   console.log('Seeding demo restaurant "Spice Route"...');
 
+  const demoRestaurant = {
+    name: 'Spice Route',
+    timezone: 'America/Los_Angeles',
+    address: '221 Market Street, San Francisco, CA 94105',
+    phone: '+14155550142',
+    settings: {
+      avgPrepBufferMinutes: 5,
+      tableHoldWindowMinutes: 20,
+      // CP6: with the 12-minute dish below, this reconciles the deck's
+      // worked example exactly (8:15 arrival -> 7:58 kitchen start ->
+      // 8:18 food out). See docs/decisions.md's CP6 entry.
+      expoBufferMinutes: 8,
+    },
+  };
+
+  // CP10: this was `update: {}`, which made the seed idempotent in the
+  // wrong sense -- it could create a restaurant but could never correct
+  // one. The demo restaurant was seeded before CP6 added
+  // `expoBufferMinutes`, so its settings stayed one key short forever,
+  // and `recomputeTargets` silently refused to compute any timing at all.
+  // Re-running the seed did nothing, because the row already existed.
+  // Idempotent should mean "converge to the seeded state", not "never
+  // touch what is already there".
   const restaurant = await prisma.restaurant.upsert({
     where: { id: RESTAURANT_ID },
-    update: {},
-    create: {
-      id: RESTAURANT_ID,
-      name: 'Spice Route',
-      timezone: 'America/Los_Angeles',
-      address: '221 Market Street, San Francisco, CA 94105',
-      phone: '+14155550142',
-      settings: {
-        avgPrepBufferMinutes: 5,
-        tableHoldWindowMinutes: 20,
-        // CP6: with the 12-minute dish below, this reconciles the deck's
-        // worked example exactly (8:15 arrival -> 7:58 kitchen start ->
-        // 8:18 food out). See docs/decisions.md's CP6 entry.
-        expoBufferMinutes: 8,
-      },
-    },
+    update: demoRestaurant,
+    create: { id: RESTAURANT_ID, ...demoRestaurant },
   });
 
   const menuItems = [
