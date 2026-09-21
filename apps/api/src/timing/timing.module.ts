@@ -16,6 +16,9 @@ import { CLOCK, SystemClock } from './clock.js';
   imports: [AuthModule],
   controllers: [KitchenController],
   providers: [TimingService, { provide: CLOCK, useClass: SystemClock }],
-  exports: [TimingService],
+  // CLOCK is exported so later checkpoints (CP8's kitchen display) inject the
+  // same clock instance rather than each module providing its own -- one clock
+  // per process is what makes time-travel in tests actually control everything.
+  exports: [TimingService, CLOCK],
 })
 export class TimingModule {}

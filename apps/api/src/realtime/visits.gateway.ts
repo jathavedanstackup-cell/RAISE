@@ -7,6 +7,7 @@ import { requireEnv } from '../auth/env.util.js';
 import { RealtimeTicketService } from './realtime-ticket.service.js';
 import { VISIT_CONFIRMED, VISIT_TABLE_REASSIGNED, VisitConfirmedEvent, VisitTableReassignedEvent } from './realtime.events.js';
 import { VISIT_KITCHEN_ACCEPTED, VISIT_TIMING_RECOMPUTED, VisitKitchenAcceptedEvent, VisitTimingRecomputedEvent } from '../timing/timing.events.js';
+import { VISIT_ALLERGY_ACKNOWLEDGED, VISIT_FOOD_OUT, VisitAllergyAcknowledgedEvent, VisitFoodOutEvent } from '../kitchen/kitchen.events.js';
 
 /** Caps how many sockets one restaurant can hold open at once (WS-08 in the CP7 threat model) — a runaway/buggy client shouldn't be able to degrade the shared process for every other connected restaurant. */
 const MAX_CONNECTIONS_PER_RESTAURANT = 50;
@@ -101,6 +102,24 @@ export class VisitsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.emitToRestaurant(event.restaurantId, 'visit.kitchen.accepted', {
       visitId: event.visitId,
       acceptedAt: event.acceptedAt.toISOString(),
+    });
+  }
+
+  @OnEvent(VISIT_ALLERGY_ACKNOWLEDGED)
+  onAllergyAcknowledged(event: VisitAllergyAcknowledgedEvent): void {
+    // Carries only the audit fact. Deliberately NOT a signal to change how
+    // the flags render -- see docs/decisions.md's CP8 entry.
+    this.emitToRestaurant(event.restaurantId, 'visit.allergy_acknowledged', {
+      visitId: event.visitId,
+      acknowledgedAt: event.acknowledgedAt.toISOString(),
+    });
+  }
+
+  @OnEvent(VISIT_FOOD_OUT)
+  onFoodOut(event: VisitFoodOutEvent): void {
+    this.emitToRestaurant(event.restaurantId, 'visit.food_out', {
+      visitId: event.visitId,
+      servedAt: event.servedAt.toISOString(),
     });
   }
 

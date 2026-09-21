@@ -14,14 +14,18 @@ Format per entry:
 
 ---
 
-<!-- One decision is still pending, per docs/execution-guide.md §4 — fill this in once the restaurant interviews from docs/user-research-plan.md happen, and do not start CP8's allergy-flag work until it's filled in:
-
 ## Allergy flag: passive display vs. staff acknowledgment
-- Affects checkpoint(s): CP8
-- Decision: TBD — pending restaurant interviews
-- Why: TBD
-
--->
+- **Date**: 2026-09-21
+- **Affects checkpoint(s)**: CP8 (kitchen display) -- this is CP8's own gate, separate from the accept-step entry below. An earlier read treated the accept-step decision as unblocking CP8; it does not. CP8 names two prerequisites: CP6 merged, *and* this entry filled in.
+- **Status**: **DECIDED** by Jathavedan, 2026-09-21. Not provisional -- see the note on evidence below.
+- **Decision**: **Acknowledgment required, and the flag never recedes.** A ticket carrying an allergy flag cannot be marked `food_out` until a staff member explicitly acknowledges the flag. The acknowledgment is recorded as an auditable event. It does **not** change what is rendered: the flag keeps exactly the same prominence, treatment and position before and after. Acknowledgment records that a human looked; it is not a dismissal.
+- **Why**:
+  - **The disappearing-flag failure mode is the thing to design against.** The conventional acknowledgment pattern dismisses or quiets what it acknowledges -- that is what makes it feel like progress. Applied to an allergy, it produces a ticket that *looks clean* precisely when it is most dangerous: the plater who picks it up after the acknowledger is now working from a screen that no longer warns them. A flag that is never asked about at all is safer than one that vanishes on tap. So the acknowledgment and the display are deliberately decoupled: one is an event, the other is a permanent property of the ticket.
+  - **Reversibility asymmetry, the same test used for the accept-step below.** Removing an acknowledgment control later is deleting a control and stopping writes to an event table. Adding one later means a new UI surface, a new state transition, a new audit record, and a migration -- retrofitted onto a kitchen display built assuming none of it existed. The expensive direction is the one to take now, while it is cheap.
+  - **Consistency with the trust boundaries CP5/CP6/CP7 established.** This codebase's standing position is that consequential real-world actions require an explicit human affirmative step, and that the step leaves an audit record. Food reaching a guest with a declared allergy is the most consequential action in the product. Treating it as the one place where display-without-confirmation is sufficient would contradict the precedent every prior checkpoint has set.
+  - **Honest counter-argument, recorded rather than hidden**: this adds a tap at the busiest moment, and a kitchen under rush pressure may acknowledge reflexively without reading -- the same rubber-stamp risk logged against the accept-step below. That risk is real and accepted. The mitigation is *not* more friction; it is that the flag stays visible afterwards, so a reflexive tap costs the audit trail's meaning but not the warning itself. This is the specific reason the never-dismiss half is load-bearing and not decoration.
+- **Safety-flag visual treatment** (resolves CP8's "design input" note and `docs/concept-critique.md`'s double-duty accent finding): allergy flags do **not** share the accent colour used for priority/next. The deck reuses one accent for both, which means the most urgent signal on the screen is indistinguishable from a routine one. Safety flags keep the existing high-contrast chip treatment already shipped in `apps/restaurant` (`--chip-allergen-bg` / `--chip-allergen-fg`), and must remain identifiable **without relying on colour alone** -- a sun-washed pass screen and a colour-blind cook are both ordinary conditions, not edge cases. Priority/next may keep the accent; allergy may not.
+- **On evidence**: the original gate said "pending restaurant interviews." Those have not happened. This is decided from the reversibility argument rather than from field evidence, and is marked DECIDED rather than PROVISIONAL because the never-dismiss property should not be quietly traded away later for screen tidiness. If interviews produce evidence that the acknowledgment step is pure friction, the *acknowledgment* may be dropped. The permanent-prominence rule stays regardless.
 
 ## Kitchen auto-start vs. staff accept-step
 - **Date**: 2026-09-19

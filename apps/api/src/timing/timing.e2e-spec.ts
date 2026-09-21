@@ -342,6 +342,16 @@ describe('CP6 timing engine', () => {
       const path = await import('node:path');
       const srcRoot = path.resolve(import.meta.dirname, '..');
 
+      /** True only if the file WRITES the status: it appears in a `data:` block rather than a `where:` read guard. */
+      function writesStatus(contents: string, status: string): boolean {
+        const pattern = new RegExp(`status:\\s*['"]${status}['"]`, 'g');
+        for (const match of contents.matchAll(pattern)) {
+          const before = contents.slice(Math.max(0, match.index - 400), match.index);
+          if (before.lastIndexOf('data:') > before.lastIndexOf('where:')) return true;
+        }
+        return new RegExp(`VisitStatus\\.${status}`).test(contents);
+      }
+
       const offenders: string[] = [];
       async function walk(dir: string) {
         for (const entry of await readdir(dir, { withFileTypes: true })) {
@@ -354,7 +364,13 @@ describe('CP6 timing engine', () => {
           if (!entry.name.endsWith('.ts') || entry.name.endsWith('.spec.ts') || entry.name.endsWith('.e2e-spec.ts')) continue;
           if (full === path.join(srcRoot, 'timing', 'timing.service.ts')) continue;
           const contents = await readFile(full, 'utf8');
-          if (/status:\s*['"]kitchen_started['"]/.test(contents) || /VisitStatus\.kitchen_started/.test(contents)) {
+          // Only a WRITE counts. Any code that transitions a visit OUT of
+          // kitchen_started must name the status in a `where:` guard, and CP8's
+          // food-out path does exactly that -- flagging it would make this
+          // invariant fire on the correct code and force the next author to
+          // weaken it. So: the status must sit inside a Prisma `data:` block,
+          // not a `where:` one, to count as an offence.
+          if (writesStatus(contents, 'kitchen_started')) {
             offenders.push(full);
           }
         }

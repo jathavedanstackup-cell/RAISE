@@ -219,6 +219,7 @@ model Visit {
   conversationTurns ConversationTurn[]
   notificationLogs  NotificationLog[]
   statusEvents      VisitStatusEvent[]
+  allergyAck        VisitAllergyAcknowledgment?
 
   @@index([restaurantId])
   @@index([restaurantId, status])
@@ -257,6 +258,32 @@ model VisitStatusEvent {
   @@index([restaurantId])
   @@index([visitId])
   @@map("visit_status_events")
+}
+
+/// CP8 -- an append-only record that a staff member confirmed they had seen
+/// a visit's allergy flags. Deliberately its own table rather than a pair of
+/// columns on Visit: this is an audit fact about a person, not mutable visit
+/// state, and it is the gate on `food_out`.
+///
+/// Unique on visitId: one acknowledgment per visit is what the gate needs,
+/// and the constraint is what makes a double-tap idempotent at the database
+/// rather than in application code.
+///
+/// Critically, per docs/decisions.md's CP8 entry, this row NEVER changes how
+/// the allergy flags render. It records that someone looked. A flag that
+/// disappears once acknowledged is the failure this design exists to prevent.
+model VisitAllergyAcknowledgment {
+  id             String   @id @default(uuid(7))
+  restaurantId   String   @map("restaurant_id")
+  visitId        String   @unique @map("visit_id")
+  acknowledgedAt DateTime @default(now()) @map("acknowledged_at")
+  /// StaffUser.id of whoever confirmed they had seen the flags.
+  staffUserId    String   @map("staff_user_id")
+
+  visit Visit @relation(fields: [visitId], references: [id], onDelete: Cascade)
+
+  @@index([restaurantId])
+  @@map("visit_allergy_acknowledgments")
 }
 
 model VisitItem {
