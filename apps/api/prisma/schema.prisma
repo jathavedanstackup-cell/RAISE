@@ -331,18 +331,30 @@ model NotificationLog {
   id           String    @id @default(uuid(7))
   restaurantId String    @map("restaurant_id")
   visitId      String    @map("visit_id")
-  /// e.g. "sms" | "push" | "email" — kept as a plain string; CP9 owns the
-  /// concrete channel set and provider wiring (Twilio SMS + web push per
-  /// Part 2.2), not CP1.
+  /// CP9 owns the concrete set: "booking_confirmation" | "new_inbound_alert"
+  /// | "eta_drift_alert". The `@@unique([visitId, type])` below is the
+  /// actual idempotency mechanism -- a claim row is inserted before the
+  /// send is attempted, so a duplicate attempt (retry, reconnect, a
+  /// re-delivered event) fails at the database, not in application code.
+  /// At most one of each type per visit, ever -- including a second ETA
+  /// drift; see docs/decisions.md's CP9 entry for why that's a deliberate
+  /// choice, not a limitation.
+  type         String
+  /// e.g. "sms" | "in_app" — kept as a plain string; CP9 owns the concrete
+  /// channel set and provider wiring (Twilio SMS + the existing CP7
+  /// realtime gateway for in-app alerts), not CP1.
   channel      String
   payload      Json
   sentAt       DateTime? @map("sent_at")
-  /// e.g. "pending" | "sent" | "failed" — same reasoning as `channel`.
+  /// "pending" | "sent" | "failed" — same reasoning as `channel`. A row
+  /// stuck in "pending" (process died between claim and send) is a real,
+  /// documented gap: CP9 has no redelivery worker, see docs/decisions.md.
   status       String    @default("pending")
   createdAt    DateTime  @default(now()) @map("created_at")
 
   visit Visit @relation(fields: [visitId], references: [id], onDelete: Cascade)
 
+  @@unique([visitId, type])
   @@index([restaurantId])
   @@index([visitId])
   @@map("notification_logs")

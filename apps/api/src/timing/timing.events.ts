@@ -22,6 +22,16 @@ export class VisitTimingRecomputedEvent {
     public readonly visitId: string,
     public readonly kitchenStartTarget: Date,
     public readonly foodOutTarget: Date,
+    /**
+     * The kitchen-start target this recompute REPLACED, or `null` when the
+     * visit had none yet (the first computation). Added in CP9: a drift
+     * alert is about the MAGNITUDE of the change, and magnitude is not
+     * derivable from the new value alone. Deliberately the previous
+     * target rather than the previous ETA -- the target is what the
+     * kitchen actually works to, and it is the buffer-adjusted quantity
+     * the drift threshold is calibrated against (see drift-policy.ts).
+     */
+    public readonly previousKitchenStartTarget: Date | null,
     /** Why this recompute happened -- lets a consumer decide whether to interrupt a kitchen screen or just quietly update a countdown. */
     public readonly reason: 'initial' | 'eta_changed' | 'items_changed',
   ) {}
