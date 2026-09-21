@@ -37,10 +37,16 @@ export class NotificationSubscriber {
    */
   @OnEvent(VISIT_CONFIRMED)
   async onVisitConfirmed(event: VisitConfirmedEvent): Promise<void> {
-    await this.run('visit.confirmed', event.visitId, async () => {
-      await this.notifications.sendBookingConfirmation(event.restaurantId, event.visitId);
-      await this.notifications.sendNewInboundAlert(event.restaurantId, event.visitId);
-    });
+    // Each in its own `run`, deliberately not one try/catch around both:
+    // these are different notifications to different audiences, and an
+    // unexpected throw from the guest's SMS claim must not be the reason
+    // the restaurant never hears that a booking came in.
+    await this.run('visit.confirmed (booking confirmation)', event.visitId, () =>
+      this.notifications.sendBookingConfirmation(event.restaurantId, event.visitId),
+    );
+    await this.run('visit.confirmed (new inbound alert)', event.visitId, () =>
+      this.notifications.sendNewInboundAlert(event.restaurantId, event.visitId),
+    );
   }
 
   /**
