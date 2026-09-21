@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { formatClockTime } from '@raise/shared-types';
 import { Prisma } from '../generated/prisma/client.js';
 import { TenantPrismaService } from '../prisma/tenant-prisma.service.js';
 import { CLOCK, type Clock } from '../timing/clock.js';
@@ -89,7 +90,12 @@ export class NotificationService {
     );
     if (!visit || !visit.customer || !visit.table || !visit.arrivalEta) return; // not a bookable state -- nothing to confirm
 
-    const time = visit.arrivalEta.toISOString().slice(11, 16);
+    // CP10 fix. This was `arrivalEta.toISOString().slice(11, 16)` -- UTC.
+    // A guest booked for 8:15 PM at a Los Angeles restaurant received a
+    // text saying "arriving 14:45". Found by reading an actual sent
+    // message during CP10's QA pass; invisible to the whole e2e suite,
+    // which seeds every restaurant as UTC.
+    const time = formatClockTime(visit.arrivalEta, visit.restaurant.timezone);
     const body = `${visit.restaurant.name}: you're booked for ${visit.partySize} at table ${visit.table.label}, arriving ${time}. See you soon!`;
 
     await this.claimThenSend(restaurantId, visitId, 'booking_confirmation', 'sms', { to: visit.customer.phone, body }, async () => {

@@ -9,10 +9,13 @@ export default function LoginPage() {
   const [state, formAction, pending] = useActionState(loginAction, initialState);
 
   return (
-    <div className="flex flex-1 items-center justify-center bg-surface-muted px-4 py-16">
+    <main className="flex flex-1 items-center justify-center bg-surface-muted px-4 py-16">
       <div className="w-full max-w-sm rounded-lg border border-border-default bg-background p-8 shadow-sm">
         <h1 className="text-xl font-semibold tracking-tight text-foreground">Staff sign in</h1>
-        <p className="mt-1 text-sm text-text-muted">Manage your restaurant&apos;s menu.</p>
+        {/* CP10: said "Manage your restaurant's menu" — written in CP3, when
+            the menu admin was all this app did. It is now also the FOH
+            dashboard and the kitchen display. */}
+        <p className="mt-1 text-sm text-text-muted">Tonight&apos;s bookings, the pass, and your menu.</p>
 
         <form action={formAction} className="mt-6 flex flex-col gap-4" noValidate>
           <div className="flex flex-col gap-1.5">
@@ -58,6 +61,6 @@ export default function LoginPage() {
           </button>
         </form>
       </div>
-    </div>
+    </main>
   );
 }

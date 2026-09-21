@@ -23,13 +23,19 @@ export default async function DashboardPage() {
   const canReassign = session.role === "foh" || session.role === "owner";
 
   return (
-    <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 px-6 py-10">
-      <div className="flex items-center justify-between">
+    <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 px-6 py-10">
+      <header className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold tracking-tight text-foreground">Tonight — Inbound</h1>
           <p className="mt-1 text-sm text-text-muted">{session.restaurantName}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <nav aria-label="Staff sections" className="flex items-center gap-2">
+          <Link
+            href="/kitchen"
+            className="rounded-md border border-border-default px-4 py-2 text-sm font-medium text-foreground transition hover:bg-surface-muted"
+          >
+            Kitchen
+          </Link>
           <Link
             href="/menu"
             className="rounded-md border border-border-default px-4 py-2 text-sm font-medium text-foreground transition hover:bg-surface-muted"
@@ -44,14 +50,15 @@ export default async function DashboardPage() {
               Sign out
             </button>
           </form>
-        </div>
-      </div>
+        </nav>
+      </header>
 
       <DashboardLive
         initialVisits={visitsBody.visits}
         tables={tablesBody.tables}
         canReassign={canReassign}
+        timezone={visitsBody.timezone}
       />
-    </div>
+    </main>
   );
 }

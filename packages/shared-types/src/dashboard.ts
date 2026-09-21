@@ -27,6 +27,15 @@ export interface DashboardVisitDto {
 
 export interface DashboardListResponse {
   visits: DashboardVisitDto[];
+  /**
+   * The restaurant's IANA timezone. Sent with the list rather than
+   * assumed by the client: CP10 found every time on this screen was
+   * being rendered in the BROWSER's zone, which is only ever right by
+   * coincidence. Instants stay instants on the wire (CP6's rule —
+   * arithmetic on instants, formatting at the edge); this is what the
+   * edge needs to format them correctly.
+   */
+  timezone: string;
 }
 
 export type TableAvailabilityStatus = "free" | "held" | "seated";

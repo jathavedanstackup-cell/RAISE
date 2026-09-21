@@ -5,7 +5,10 @@ import type { MenuItemDto } from "@raise/shared-types";
 import { AllergenFields } from "./allergen-fields";
 import type { MenuFormState } from "@/app/menu/actions";
 
-type FormAction = (prevState: MenuFormState, formData: FormData) => Promise<MenuFormState>;
+type FormAction = (
+  prevState: MenuFormState,
+  formData: FormData,
+) => Promise<MenuFormState>;
 
 const initialState: MenuFormState = {};
 
@@ -17,7 +20,13 @@ export function MenuItemForm({
   action: FormAction;
   defaultValues?: Pick<
     MenuItemDto,
-    "name" | "description" | "price" | "prepTimeMinutes" | "category" | "allergens" | "available"
+    | "name"
+    | "description"
+    | "price"
+    | "prepTimeMinutes"
+    | "category"
+    | "allergens"
+    | "available"
   >;
   submitLabel: string;
 }) {
@@ -36,7 +45,11 @@ export function MenuItemForm({
         />
       </Field>
 
-      <Field label="Description (optional)" name="description" error={state.fieldErrors?.description}>
+      <Field
+        label="Description (optional)"
+        name="description"
+        error={state.fieldErrors?.description}
+      >
         <input
           id="description"
           name="description"
@@ -47,7 +60,11 @@ export function MenuItemForm({
       </Field>
 
       <div className="grid grid-cols-2 gap-4">
-        <Field label="Category" name="category" error={state.fieldErrors?.category}>
+        <Field
+          label="Category"
+          name="category"
+          error={state.fieldErrors?.category}
+        >
           <input
             id="category"
             name="category"

@@ -41,6 +41,8 @@ export interface KitchenTicketDto {
 
 export interface KitchenQueueResponse {
   tickets: KitchenTicketDto[];
+  /** The restaurant's IANA timezone — see the note on DashboardListResponse. */
+  timezone: string;
 }
 
 export interface AcknowledgeAllergyResponse {

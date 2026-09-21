@@ -1,7 +1,12 @@
 "use client";
 
-import { useState } from "react";
-import type { ConfirmedVisitDto, ConfirmRejectionBody, ConfirmVisitResponse, VisitDraftDto } from "@raise/shared-types";
+import { useEffect, useRef, useState } from "react";
+import type {
+  ConfirmedVisitDto,
+  ConfirmRejectionBody,
+  ConfirmVisitResponse,
+  VisitDraftDto,
+} from "@raise/shared-types";
 
 interface ConfirmPanelProps {
   restaurantId: string;
@@ -28,7 +33,13 @@ interface ConfirmPanelProps {
  * consequential control in the product, so it's full-width, high-contrast,
  * and never inferred from anything but its own explicit click/Enter.
  */
-export function ConfirmPanel({ restaurantId, visitId, draftToken, draft, onConfirmed }: ConfirmPanelProps) {
+export function ConfirmPanel({
+  restaurantId,
+  visitId,
+  draftToken,
+  draft,
+  onConfirmed,
+}: ConfirmPanelProps) {
   const [phone, setPhone] = useState("");
   const [otpSent, setOtpSent] = useState(false);
   const [otpCode, setOtpCode] = useState("");
@@ -36,7 +47,42 @@ export function ConfirmPanel({ restaurantId, visitId, draftToken, draft, onConfi
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const ready = draft.partySize !== null && draft.arrivalEta !== null && draft.tableProposal !== null;
+  /**
+   * CP10 fixed both halves of the same problem here. Each step of this
+   * flow unmounts the button that was just pressed ("Send code" becomes
+   * a code field; "Verify" becomes the confirm button), which dropped
+   * focus to <body> every time, and nothing announced that a code had
+   * been sent or that the phone was verified. A keyboard or
+   * screen-reader user pressed a button and then had neither focus nor
+   * information. Found by pressing the buttons, not by axe -- no
+   * automated checker sees a step change.
+   */
+  const otpRef = useRef<HTMLInputElement | null>(null);
+  const confirmRef = useRef<HTMLButtonElement | null>(null);
+
+  // Derived, not stored: the announcement IS the step, so there is nothing
+  // to keep in sync and no setState-inside-an-effect for the React compiler
+  // to object to (the same lint that shaped CP7's socket hook).
+  const status = customerToken
+    ? "Phone verified. You can confirm your booking now."
+    : otpSent
+      ? "We've sent a code to your phone. Enter it below."
+      : "";
+
+  // Effects here do one thing only: move focus to whatever replaced the
+  // control the guest just pressed.
+  useEffect(() => {
+    if (otpSent && !customerToken) otpRef.current?.focus();
+  }, [otpSent, customerToken]);
+
+  useEffect(() => {
+    if (customerToken) confirmRef.current?.focus();
+  }, [customerToken]);
+
+  const ready =
+    draft.partySize !== null &&
+    draft.arrivalEta !== null &&
+    draft.tableProposal !== null;
   if (!ready) return null;
 
   async function sendCode(event: React.FormEvent) {
@@ -50,10 +96,17 @@ export function ConfirmPanel({ restaurantId, visitId, draftToken, draft, onConfi
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone: phone.trim() }),
       });
-      if (!res.ok) throw new Error("Couldn't send a code to that number — check it and try again.");
+      if (!res.ok)
+        throw new Error(
+          "Couldn't send a code to that number — check it and try again.",
+        );
       setOtpSent(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't send a code to that number.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Couldn't send a code to that number.",
+      );
     } finally {
       setBusy(false);
     }
@@ -71,7 +124,10 @@ export function ConfirmPanel({ restaurantId, visitId, draftToken, draft, onConfi
         body: JSON.stringify({ phone: phone.trim(), code: otpCode.trim() }),
       });
       const body = (await res.json()) as { token?: string; message?: string };
-      if (!res.ok || !body.token) throw new Error(body.message ?? "That code didn't match — check it and try again.");
+      if (!res.ok || !body.token)
+        throw new Error(
+          body.message ?? "That code didn't match — check it and try again.",
+        );
       setCustomerToken(body.token);
     } catch (err) {
       setError(err instanceof Error ? err.message : "That code didn't match.");
@@ -87,21 +143,36 @@ export function ConfirmPanel({ restaurantId, visitId, draftToken, draft, onConfi
     try {
       const res = await fetch(`/api/visits/${visitId}/confirm`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${draftToken}`, "X-Customer-Token": customerToken },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${draftToken}`,
+          "X-Customer-Token": customerToken,
+        },
         body: JSON.stringify({ restaurantId }),
       });
-      const body = (await res.json()) as Partial<ConfirmVisitResponse> & Partial<ConfirmRejectionBody>;
-      if (!res.ok) throw new Error(body.message ?? "Something went wrong confirming your booking.");
+      const body = (await res.json()) as Partial<ConfirmVisitResponse> &
+        Partial<ConfirmRejectionBody>;
+      if (!res.ok)
+        throw new Error(
+          body.message ?? "Something went wrong confirming your booking.",
+        );
       if (body.visit) onConfirmed(body.visit);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong confirming your booking.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong confirming your booking.",
+      );
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <section aria-labelledby="confirm-heading" className="flex flex-col gap-4 rounded-lg border-2 border-zinc-400 p-4 dark:border-zinc-500">
+    <section
+      aria-labelledby="confirm-heading"
+      className="flex flex-col gap-4 rounded-lg border-2 border-zinc-400 p-4 dark:border-zinc-500"
+    >
       <h2 id="confirm-heading" className="text-lg font-semibold">
         Review your visit
       </h2>
@@ -111,7 +182,12 @@ export function ConfirmPanel({ restaurantId, visitId, draftToken, draft, onConfi
         <dt className="font-medium">Party size</dt>
         <dd>{draft.partySize}</dd>
         <dt className="font-medium">Arrival</dt>
-        <dd>{new Date(draft.arrivalEta!).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</dd>
+        <dd>
+          {new Date(draft.arrivalEta!).toLocaleTimeString([], {
+            hour: "numeric",
+            minute: "2-digit",
+          })}
+        </dd>
         <dt className="font-medium">Table</dt>
         <dd>{draft.tableProposal!.label}</dd>
       </dl>
@@ -124,8 +200,15 @@ export function ConfirmPanel({ restaurantId, visitId, draftToken, draft, onConfi
             {draft.items.map((item) => (
               <li key={item.id}>
                 {item.quantity}x {item.name}
-                {item.modifications.length > 0 && <span> ({item.modifications.join(", ")})</span>}
-                {item.allergyFlags.length > 0 && <span className="font-medium"> — {item.allergyFlags.join(", ")}</span>}
+                {item.modifications.length > 0 && (
+                  <span> ({item.modifications.join(", ")})</span>
+                )}
+                {item.allergyFlags.length > 0 && (
+                  <span className="font-medium">
+                    {" "}
+                    — {item.allergyFlags.join(", ")}
+                  </span>
+                )}
               </li>
             ))}
           </ul>
@@ -138,10 +221,20 @@ export function ConfirmPanel({ restaurantId, visitId, draftToken, draft, onConfi
         </p>
       )}
 
+      <p role="status" aria-live="polite" className="sr-only">
+        {status}
+      </p>
+
       {!customerToken ? (
         <div className="flex flex-col gap-3 border-t border-zinc-300 pt-4 dark:border-zinc-700">
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">We&apos;ll text a code to confirm it&apos;s really you before this is booked.</p>
-          <form onSubmit={otpSent ? verifyCode : sendCode} className="flex flex-col gap-2">
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            We&apos;ll text a code to confirm it&apos;s really you before this
+            is booked.
+          </p>
+          <form
+            onSubmit={otpSent ? verifyCode : sendCode}
+            className="flex flex-col gap-2"
+          >
             <label htmlFor="confirm-phone" className="text-sm font-medium">
               Phone number
             </label>
@@ -174,6 +267,7 @@ export function ConfirmPanel({ restaurantId, visitId, draftToken, draft, onConfi
                 </label>
                 <div className="flex gap-2">
                   <input
+                    ref={otpRef}
                     id="confirm-otp"
                     type="text"
                     inputMode="numeric"
@@ -198,9 +292,12 @@ export function ConfirmPanel({ restaurantId, visitId, draftToken, draft, onConfi
         </div>
       ) : (
         <div className="flex flex-col gap-3 border-t border-zinc-300 pt-4 dark:border-zinc-700">
-          <p className="text-sm text-green-700 dark:text-green-400">✓ Phone verified</p>
+          <p className="text-sm text-green-700 dark:text-green-400">
+            ✓ Phone verified
+          </p>
           {/* The single most consequential control in the product — full-width, high-contrast, and the only path that can ever book this table. */}
           <button
+            ref={confirmRef}
             type="button"
             onClick={confirmBooking}
             disabled={busy}

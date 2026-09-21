@@ -55,9 +55,13 @@ export class TimingService {
    * for why that trigger is deliberately left for whichever checkpoint
    * first needs it) and after an order-item change.
    */
-  async recompute(restaurantId: string, visitId: string): Promise<RecomputeResult> {
+  async recompute(
+    restaurantId: string,
+    visitId: string,
+    reason: 'initial' | 'items_changed' = 'items_changed',
+  ): Promise<RecomputeResult> {
     return this.tenantPrisma.forRestaurant(restaurantId, (tx) =>
-      this.recomputeTargets(tx, restaurantId, visitId, 'items_changed'),
+      this.recomputeTargets(tx, restaurantId, visitId, reason),
     );
   }
 
@@ -98,7 +102,7 @@ export class TimingService {
     tx: ScopedPrisma,
     restaurantId: string,
     visitId: string,
-    reason: 'eta_changed' | 'items_changed',
+    reason: 'initial' | 'eta_changed' | 'items_changed',
   ): Promise<RecomputeResult> {
     const visit = await tx.visit.findFirst({
       where: { id: visitId, restaurantId },
