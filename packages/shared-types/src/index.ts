@@ -19,3 +19,4 @@ export * from "./staff-auth.js";
 export * from "./intake.js";
 export * from "./confirmation.js";
 export * from "./dashboard.js";
+export * from "./kitchen.js";

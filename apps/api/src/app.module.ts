@@ -10,6 +10,7 @@ import { VisitsModule } from './visits/visits.module.js';
 import { TimingModule } from './timing/timing.module.js';
 import { RealtimeModule } from './realtime/realtime.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
+import { KitchenModule } from './kitchen/kitchen.module.js';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { DashboardModule } from './dashboard/dashboard.module.js';
     TimingModule,
     RealtimeModule,
     DashboardModule,
+    KitchenModule,
   ],
   controllers: [AppController],
   providers: [AppService],
