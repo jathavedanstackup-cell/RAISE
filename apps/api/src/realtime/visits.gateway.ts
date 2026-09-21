@@ -8,6 +8,7 @@ import { RealtimeTicketService } from './realtime-ticket.service.js';
 import { VISIT_CONFIRMED, VISIT_TABLE_REASSIGNED, VisitConfirmedEvent, VisitTableReassignedEvent } from './realtime.events.js';
 import { VISIT_KITCHEN_ACCEPTED, VISIT_TIMING_RECOMPUTED, VisitKitchenAcceptedEvent, VisitTimingRecomputedEvent } from '../timing/timing.events.js';
 import { VISIT_ALLERGY_ACKNOWLEDGED, VISIT_FOOD_OUT, VisitAllergyAcknowledgedEvent, VisitFoodOutEvent } from '../kitchen/kitchen.events.js';
+import { ETA_DRIFT_ALERT, EtaDriftAlertEvent, NEW_INBOUND_ALERT, NewInboundAlertEvent } from '../notifications/notification.events.js';
 
 /** Caps how many sockets one restaurant can hold open at once (WS-08 in the CP7 threat model) — a runaway/buggy client shouldn't be able to degrade the shared process for every other connected restaurant. */
 const MAX_CONNECTIONS_PER_RESTAURANT = 50;
@@ -120,6 +121,25 @@ export class VisitsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.emitToRestaurant(event.restaurantId, 'visit.food_out', {
       visitId: event.visitId,
       servedAt: event.servedAt.toISOString(),
+    });
+  }
+
+  /**
+   * CP9's alerts. These are emitted by NotificationService only AFTER the
+   * claim row is won, so a reconnecting dashboard cannot cause a second
+   * alert to be pushed -- the idempotency is upstream of this Gateway,
+   * not in it.
+   */
+  @OnEvent(NEW_INBOUND_ALERT)
+  onNewInboundAlert(event: NewInboundAlertEvent): void {
+    this.emitToRestaurant(event.restaurantId, 'notification.new_inbound_alert', { visitId: event.visitId });
+  }
+
+  @OnEvent(ETA_DRIFT_ALERT)
+  onEtaDriftAlert(event: EtaDriftAlertEvent): void {
+    this.emitToRestaurant(event.restaurantId, 'notification.eta_drift_alert', {
+      visitId: event.visitId,
+      driftMinutes: event.driftMinutes,
     });
   }
 

@@ -38,6 +38,9 @@ describe('NotificationLog CRUD', () => {
       data: {
         restaurantId,
         visitId,
+        // CP9 added `type` (NOT NULL) and the @@unique([visitId, type]) that
+        // makes it the idempotency claim key.
+        type: 'booking_confirmation',
         channel: 'sms',
         payload: { template: 'booking_confirmed' },
       },

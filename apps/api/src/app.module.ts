@@ -11,6 +11,7 @@ import { TimingModule } from './timing/timing.module.js';
 import { RealtimeModule } from './realtime/realtime.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
 import { KitchenModule } from './kitchen/kitchen.module.js';
+import { NotificationModule } from './notifications/notification.module.js';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { KitchenModule } from './kitchen/kitchen.module.js';
     RealtimeModule,
     DashboardModule,
     KitchenModule,
+    NotificationModule,
   ],
   controllers: [AppController],
   providers: [AppService],

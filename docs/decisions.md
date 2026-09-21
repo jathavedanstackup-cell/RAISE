@@ -437,3 +437,64 @@ As with the CP4 follow-up, the specific plugin-namespaced names given for this t
 `ConfirmPanel` (`apps/customer/src/components/confirm-panel.tsx`) renders only once `draft.partySize`/`arrivalEta`/`tableProposal` are all present — the same completeness gate the backend enforces, so the guest never sees a confirm control before there's anything real to confirm. The read-back (party size, arrival, table, itemized order with quantities/modifications/allergy flags) is unconditionally first in the DOM, before the phone-verification step, before the confirm button — order enforced by layout, not convention. A successful confirm replaces the entire chat view with a visually distinct "You're booked!" panel (bold border, large heading) rather than another chat bubble, directly addressing `docs/concept-critique.md`'s finding that the deck's own mockup gave the single most consequential moment in the product the same visual weight as ordinary conversation.
 
 Three new Next.js Route Handlers (`/api/auth/customer/otp/request`, `/api/auth/customer/otp/verify`, `/api/visits/[visitId]/confirm`) relay to `apps/api` exactly as established in CP4 — server-only `API_BASE_URL`, no token ever touches client-side storage beyond React component state, the confirm route relays both the draft token (`Authorization`) and the customer token (`X-Customer-Token`) without inspecting or storing either.
+
+## CP9 — notifications: the claim row is the idempotency, not the application code
+
+**Status: DECIDED.**
+
+CP9's "done when" is one sentence — *each event type reliably fires exactly once (idempotency test — no duplicate SMS on retry/reconnect)* — and every decision below follows from taking "exactly once" literally, including across a restart and across a second API instance.
+
+### Claim-then-send, never send-then-record
+
+Every notification goes through one private method, `NotificationService.claimThenSend`. It INSERTs a `NotificationLog` row **before** attempting the side effect. The insert is guarded by `@@unique([visitId, type])`; a `P2002` means somebody else already claimed this notification, and the send simply does not happen.
+
+The alternative — send, then record that you sent — is wrong in a way that is invisible in testing and expensive in production: the process can die between the send and the record, and the retry then sends a second text to a real guest's phone. Claiming first inverts the failure: a crash between claim and send loses a notification rather than duplicating one. For a booking confirmation that is the right way round — a guest who did not get a text will ask; a guest who got two learns the product is unreliable.
+
+A check-then-send (read "has this been sent?", then write) is the same defect class this project has now hit three times (CP5's table claim, CP6's target rewrite, and here). At Read Committed, two callers both read "not yet" and both send. The fix is always the same: make the database, not the application, decide who wins.
+
+**Twilio has no idempotency key.** `messages.create` will happily send the same body to the same number twice; there is no client-supplied token that makes it a no-op. That is precisely why the guarantee has to live in our own database. If Twilio had one, this design would be a belt-and-braces; without one, the claim row is the only thing standing between a retry and a second text.
+
+### Why the granularity is `(visitId, type)` and not `(visitId, type, occurrence)`
+
+At most one of each notification type per visit, ever. A second significant ETA drift on the same visit does **not** produce a second alert.
+
+That is a real limitation and it is chosen deliberately. A per-occurrence key would need an occurrence identity that survives restarts and is identical across instances — in practice a sequence number on the visit, which is more state to keep correct than the thing it protects. And the failure modes are asymmetric: too few drift alerts means staff learn about a late guest from the dashboard countdown they are already watching; too many means the alert channel becomes noise and the *first* alert stops being read. The first ETA drift past the threshold is the one that carries information ("this booking is no longer what you planned for"); the third is nagging.
+
+This is reversible: adding an occurrence column later is a migration plus a key change, with no data loss and no behavioural surprise for anyone. Going the other way — having trained staff to ignore the alert — is not.
+
+### The threshold: 10 minutes, and why a number had to be picked
+
+"Significantly" in the deliverable is not implementable. `drift-policy.ts` makes it 10 minutes: twice the seeded `avgPrepBufferMinutes` (5).
+
+The reasoning is that the buffer already absorbs small drift — that is its whole function. A drift smaller than the buffer changes the kitchen-start target inside the margin the timing engine deliberately built in, and alerting on it would be alerting on something the system has already handled. At 2× the buffer the margin is gone and the kitchen would start at the wrong time without human intervention. Overridable per-deployment via `ETA_DRIFT_ALERT_THRESHOLD_MINUTES_OVERRIDE`, same shape as CP4's draft-policy override, mainly so tests can pin it.
+
+Drift is measured on **magnitude, not direction**. A guest arriving 40 minutes early is as disruptive to a kitchen working to a target as one arriving 40 minutes late.
+
+### CP6's event had to grow a field
+
+`VisitTimingRecomputedEvent` carried the new `kitchenStartTarget` but not the old one, which makes drift magnitude uncomputable by any subscriber. Added `previousKitchenStartTarget: Date | null`, captured from the row before the conditional UPDATE. Deliberately the previous *target* rather than the previous *ETA*: the target is what the kitchen works to, and it is the buffer-adjusted quantity the threshold is calibrated against.
+
+`null` on the first computation, which is why a first computation never alerts — there is nothing to drift from.
+
+### Only `eta_changed` alerts
+
+An `items_changed` recompute moves the same targets, but it is staff editing the order. Alerting people about a change they just made themselves is how alert channels get muted.
+
+### No controller, on purpose
+
+Nothing about notifications is client-triggerable. Every send originates from a domain event the server itself emitted. An endpoint meaning "send the confirmation for visit X" would be an SMS-amplification primitive aimed at a guest's phone — rate-limited or not, it is a surface with no legitimate caller.
+
+### Known gaps, stated rather than discovered later
+
+- **No redelivery worker.** A process that dies between claiming and sending leaves a row in `status: "pending"` forever, and nothing retries it. In scope terms this checkpoint is about idempotent *sending*, not guaranteed delivery. The pending rows are the audit trail that makes such a worker straightforward to add.
+- **`sent` means "Twilio accepted it"**, not "it reached the phone". Real delivery is confirmed asynchronously via status callbacks, which CP9 does not build.
+- **A raw `from` number, not a Messaging Service.** No A2P 10DLC registration or sender pool exists for this project; standing one up is launch-hardening work (CP12), not "send a confirmation text" work.
+- **Failures are logged, not surfaced to staff.** A failed confirmation SMS is visible in `NotificationLog.status` and the API log, nowhere else. CP11 (observability) is where that becomes an alert.
+
+### On the test that looks stronger than it is
+
+`notification.e2e-spec.ts` includes a five-way concurrent race. Run against a deliberately broken check-then-send, it **passed** — the window between an adjacent read and write was too narrow to interleave on this machine — and only failed once a 200ms delay was injected between them. It is kept as a smoke signal, labelled in the file as exactly that.
+
+The deterministic proofs are the two tests next to it: one inserts a claim row as if another instance had won and asserts nothing is sent and the foreign claim is not touched; the other asserts against the live database that the unique index on `(visit_id, type)` actually exists. The second matters most. Application code can be rewritten into a check-then-send by any future author; that index is what turns such a rewrite into a loud failure instead of a quiet second text to a guest.
+
+Both were proven red — an `upsert`-based claim (the most plausible accidental "fix" for the P2002 noise) fails five tests in this suite, including both deterministic ones.

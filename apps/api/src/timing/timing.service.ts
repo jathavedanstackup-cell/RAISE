@@ -134,6 +134,10 @@ export class TimingService {
     // whose kitchen has already started -- precisely the "you cannot un-cook food" case. Making the
     // write itself conditional collapses check-and-write into one atomic step, the same fix CP5 used
     // for the confirm/table claims.
+    // Captured BEFORE the write, for CP9's drift alert: the target this
+    // recompute is about to replace. `null` on the first computation.
+    const previousKitchenStartTarget = visit.kitchenStartTarget;
+
     const written = await tx.visit.updateMany({
       where: { id: visitId, restaurantId, status: 'confirmed' },
       data: { kitchenStartTarget: targets.kitchenStartTarget, foodOutTarget: targets.foodOutTarget },
@@ -142,7 +146,14 @@ export class TimingService {
 
     this.events.emit(
       VISIT_TIMING_RECOMPUTED,
-      new VisitTimingRecomputedEvent(restaurantId, visitId, targets.kitchenStartTarget, targets.foodOutTarget, reason),
+      new VisitTimingRecomputedEvent(
+        restaurantId,
+        visitId,
+        targets.kitchenStartTarget,
+        targets.foodOutTarget,
+        previousKitchenStartTarget,
+        reason,
+      ),
     );
     return { applied: true, targets };
   }
